@@ -220,8 +220,10 @@ if __name__ == '__main__':
     parser.add_argument('--image_height', type=int, default=None, required=False)
     parser.add_argument('--image_width', type=int, default=None, required=False)
     parser.add_argument('--white_bkg', type=str2bool, default=True, required=False)
-    parser.add_argument('--samples_per_ray', default=128, type=int, help='how many samples per ray')
-    parser.add_argument('--importance_samples_per_ray', default=128, type=int, help='how many importance samples per ray')
+
+    parser.add_argument('--samples_per_ray', default=64, type=int, help='how many samples per ray')
+    parser.add_argument('--importance_samples_per_ray', default=64, type=int, help='how many importance samples per ray')
+
     parser.add_argument('--delay_iters', default=0, type=int, help='delay RGB loss, train with alpha/depth first')
     parser.add_argument('--learning_rate', default=5e-4, type=float, help='NeRF learning rate')
     parser.add_argument('--lrate_decay', default=250, type=int, help='NeRF learning rate decay')

@@ -8,6 +8,7 @@ scene reconstructed from SfM, mainly VSFM and colmap
 import os
 
 from tqdm import tqdm
+import logging
 
 
 class BaseScene():
@@ -53,6 +54,8 @@ class ImageFileScene(BaseScene):
     def _build_img_X_to_index_dict(self):
         assert (self.captures is not None) and (len(self.captures) > 0), 'there is no captures'
         for i, cap in enumerate(self.captures):
+            if cap.image_path in self.image_path_to_index:
+                logging.warning(f'warning: image {cap.image_path} already exists, replacing with the new one')
             assert cap.image_path not in self.image_path_to_index, 'image already exists'
             self.image_path_to_index[cap.image_path] = i
             assert os.path.basename(cap.image_path) not in self.fname_to_index_dict, 'Image already exists'

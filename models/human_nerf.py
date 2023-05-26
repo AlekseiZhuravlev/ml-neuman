@@ -38,6 +38,7 @@ class HumanNeRF(nn.Module):
             self.scale = scale
             self.body_model = SMPL(
                 os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')), 'data/smplx/smpl'),
+                # '/home/azhuavlev/Desktop/Projects/Data/neuman/data/smplx/smpl',
                 gender='neutral',
                 device=torch.device('cpu')
             )

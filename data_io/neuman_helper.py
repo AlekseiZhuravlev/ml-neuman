@@ -221,6 +221,7 @@ class NeuManReader():
                         length = (far - near) * range_scale
                         cur_cap.near[k] = max(0.0, float(center - length / 2))
                         cur_cap.far[k] = float(center + length / 2)
+
         captures, point_cloud, num_views, num_cams = cls.read_captures(scene_dir, tgt_size, mask_dir=mask_dir, keypoints_dir=keypoints_dir, densepose_dir=densepose_dir)
         scene = scene_module.RigCameraScene(captures, num_views, num_cams)
         scene.point_cloud = point_cloud
@@ -266,64 +267,102 @@ class NeuManReader():
             return out
 
         device = torch.device('cpu')
+
+        # smpl model
         body_model = SMPL(
             os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')), 'data/smplx/smpl'),
             gender='neutral',
             device=device
         )
+
+        # arrays which will later be exported
         smpls = []
         static_verts = []
         world_verts = []
         Ts = []
+
+        # file name assigment
         smpl_path = os.path.join(scene_dir, f'smpl_output_{smpl_type}.pkl')
         assert os.path.isfile(smpl_path), f'{smpl_path} is missing'
         print(f'using {smpl_type} smpl')
+
+        # load smpl output for each frame
         raw_smpl = joblib.load(smpl_path)
         assert len(raw_smpl) == 1
         raw_smpl = raw_smpl[list(raw_smpl.keys())[0]]
+
+        # read alignments for each frame
         raw_alignments = np.load(os.path.join(scene_dir, 'alignments.npy'), allow_pickle=True).item()
+
         for cap in caps:
             frame_id = int(os.path.basename(cap.image_path)[:-4])
             # assert 0 <= frame_id < len(caps)
+
+            # get smpl for the current frame
             temp_smpl = extract_smpl_at_frame(raw_smpl, frame_id)
+
+            # affine transformation matrix for the current frame,
+            # I guess from (0,0,0) to the body position
             temp_alignment = np.eye(4)
             temp_alignment[:, :3] = raw_alignments[os.path.basename(cap.image_path)]
 
             # 大 pose
+            # get (72,) vector of ZEROS, convert it to (24,3) vector, replace [1] and [2] values (right and left hip)
+            # and reshape it back to (72,) vector
+            # i.e. spread the legs of T-pose
             da_smpl = np.zeros_like(temp_smpl['pose'][None])
             da_smpl = da_smpl.reshape(-1, 3)
             da_smpl[1] = np.array([0, 0, 1.0])
             da_smpl[2] = np.array([0, 0, -1.0])
             da_smpl = da_smpl.reshape(1, -1)
 
+            # vertex transformation from T-pose to the frame pose
             _, T_t2pose = body_model.verts_transformations(
                 return_tensor=False,
                 poses=temp_smpl['pose'][None],
                 betas=temp_smpl['betas'][None],
                 concat_joints=True
             )
+
+            # vertex transformation from T-pose to the DA pose
             _, T_t2da = body_model.verts_transformations(
                 return_tensor=False,
                 poses=da_smpl,
                 betas=temp_smpl['betas'][None],
                 concat_joints=True
             )
+            # vertex transformation from DA pose to the frame pose
             T_da2pose = T_t2pose @ np.linalg.inv(T_t2da)
+
+            # update T_da2pose, so now it also positions the body in the frame
             T_da2scene = temp_alignment.T @ T_da2pose
+
+            # rescale
             s = np.eye(4)
             s[:3, :3] *= scale
             T_da2scene = s @ T_da2scene
 
+            # get vertices and joints of the DA pose
             da_pose_verts, da_pose_joints = body_model(
                 return_tensor=False,
                 return_joints=True,
                 poses=da_smpl,
                 betas=temp_smpl['betas'][None]
             )
-            temp_world_verts = np.einsum('BNi, Bi->BN', T_da2scene, ray_utils.to_homogeneous(np.concatenate([da_pose_verts, da_pose_joints], axis=0)))[:, :3].astype(np.float32)
+            temp_world_verts = np.einsum(
+                'BNi, Bi->BN', T_da2scene,
+                ray_utils.to_homogeneous(
+                    np.concatenate([da_pose_verts, da_pose_joints], axis=0)
+                )
+            )[:, :3].astype(np.float32)
+
             temp_world_verts, temp_world_joints = temp_world_verts[:6890, :], temp_world_verts[6890:, :]
+            # joints of the frame pose
             temp_smpl['joints_3d'] = temp_world_joints
+            # joints of the DA pose
             temp_smpl['static_joints_3d'] = da_pose_joints
+
+            # add results for each frame to the arrays
             smpls.append(temp_smpl)
             Ts.append(T_da2scene)
             static_verts.append(da_pose_verts)
@@ -339,31 +378,38 @@ class NeuManReader():
             tgt_size,
             order='video',
         )
-        num_views = len(raw_scene.captures)
-        num_cams = 1
+        num_views = len(raw_scene.captures) // 5
+        num_cams = 5
         counter = 0
+        print(num_views, num_cams)
         for view_id in range(num_views):
             for cam_id in range(num_cams):
                 raw_cap = raw_scene.captures[counter]
                 depth_path = raw_cap.image_path.replace('/images/', '/depth_maps/') + '.geometric.bin'
                 mono_depth_path = raw_cap.image_path.replace('/images/', '/mono_depth/')
+
                 if not os.path.isfile(depth_path):
                     depth_path = raw_cap.image_path + 'dummy'
                     print(f'can not find mvs depth for {os.path.basename(raw_cap.image_path)}')
+
                 if not os.path.isfile(mono_depth_path):
                     mono_depth_path = raw_cap.image_path + 'dummy'
                     print(f'can not find mono depth for {os.path.basename(raw_cap.image_path)}')
+
                 mask_path = os.path.join(scene_dir, mask_dir, os.path.basename(raw_cap.image_path) + '.npy')
                 if not os.path.isfile(mask_path):
                     mask_path = os.path.join(scene_dir, mask_dir, os.path.basename(raw_cap.image_path))
+
                 keypoints_path = os.path.join(scene_dir, keypoints_dir, os.path.basename(raw_cap.image_path) + '.npy')
                 if not os.path.isfile(keypoints_path):
                     print(f'can not find keypoints for {os.path.basename(raw_cap.image_path)}')
                     keypoints_path = None
+
                 densepose_path = os.path.join(scene_dir, densepose_dir, 'dp_' + os.path.basename(raw_cap.image_path) + '.npy')
                 if not os.path.isfile(densepose_path):
                     print(f'can not find densepose for {os.path.basename(raw_cap.image_path)}')
                     densepose_path = None
+
                 if tgt_size is None:
                     temp = NeuManCapture(
                         raw_cap.image_path,
@@ -395,3 +441,7 @@ class NeuManReader():
                 counter += 1
                 caps.append(temp)
         return caps, raw_scene.point_cloud, num_views, num_cams
+
+if __name__ == '__main__':
+    result = NeuManReader.read_captures('/home/azhuavlev/Desktop/Data/InterHand_Neuman/01/', tgt_size=None)
+    # print(result)

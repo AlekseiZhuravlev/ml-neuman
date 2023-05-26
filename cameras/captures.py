@@ -108,9 +108,10 @@ class DepthPinholeCapture(BasePinholeCapture):
 
 
 class RGBPinholeCapture(BasePinholeCapture):
-    def __init__(self, image_path, pinhole_cam, cam_pose):
+    def __init__(self, image_path, pinhole_cam, cam_pose, old_image_name):
         BasePinholeCapture.__init__(self, pinhole_cam, cam_pose)
         self.captured_image = contents.CapturedImage(image_path)
+        self.old_image_name = old_image_name
 
     def read_image_to_ram(self):
         return self.captured_image.read_image_to_ram()

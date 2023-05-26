@@ -15,22 +15,27 @@ from cameras.pinhole_camera import PinholeCamera
 from cameras import captures as captures_module
 from scenes import scene as scene_module
 
+import json
+import logging
 
-ImageMeta = namedtuple('ImageMeta', ['image_id', 'camera_pose', 'camera_id', 'image_path'])
+
+ImageMeta = namedtuple('ImageMeta', ['image_id', 'camera_pose', 'camera_id', 'image_path', 'old_image_name'])
 
 
 class ColmapAsciiReader():
     def __init__(self):
         pass
 
+
+
     @classmethod
     def read_scene(cls, scene_dir, images_dir, tgt_size=None, order='default'):
-        point_cloud_path = os.path.join(scene_dir, 'points3D.txt')
+        # point_cloud_path = os.path.join(scene_dir, 'points3D.txt')
         cameras_path = os.path.join(scene_dir, 'cameras.txt')
         images_path = os.path.join(scene_dir, 'images.txt')
         captures = cls.read_captures(images_path, cameras_path, images_dir, tgt_size, order)
-        point_cloud = cls.read_point_cloud(point_cloud_path)
-        scene = scene_module.ImageFileScene(captures, point_cloud)
+        # point_cloud = cls.read_point_cloud(point_cloud_path)
+        scene = scene_module.ImageFileScene(captures, point_cloud=None)
         return scene
 
     @staticmethod
@@ -59,8 +64,8 @@ class ColmapAsciiReader():
     @classmethod
     def read_captures(cls, images_txt_path, cameras_txt_path, images_dir, tgt_size, order='default'):
         captures = []
-        cameras = cls.read_cameras(cameras_txt_path)
-        images_meta = cls.read_images_meta(images_txt_path, images_dir)
+        cameras, images_meta = cls.read_cameras_and_meta(cameras_txt_path)
+        # images_meta = cls.read_images_meta(images_txt_path, images_dir)
         if order == 'default':
             keys = images_meta.keys()
         elif order == 'video':
@@ -77,8 +82,11 @@ class ColmapAsciiReader():
             cur_cam = cameras[cur_cam_id]
             cur_camera_pose = images_meta[key].camera_pose
             cur_image_path = images_meta[key].image_path
+            cur_image_old_name = images_meta[key].old_image_name
+
+            # print(cur_cam_id, cur_cam, cur_camera_pose, cur_image_path, cur_image_old_name)
             if tgt_size is None:
-                cap = captures_module.RGBPinholeCapture(cur_image_path, cur_cam, cur_camera_pose)
+                cap = captures_module.RGBPinholeCapture(cur_image_path, cur_cam, cur_camera_pose, cur_image_old_name)
             else:
                 cap = captures_module.ResizedRGBPinholeCapture(cur_image_path, cur_cam, cur_camera_pose, tgt_size)
             if order == 'video':
@@ -87,34 +95,73 @@ class ColmapAsciiReader():
         return captures
 
     @classmethod
-    def read_cameras(cls, cameras_txt_path):
-        cameras = {}
-        with open(cameras_txt_path, "r") as fid:
-            line = fid.readline()
-            assert line == '# Camera list with one line of data per camera:\n'
-            line = fid.readline()
-            assert line == '#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n'
-            line = fid.readline()
-            assert re.search('^# Number of cameras: \d+\n$', line)
-            num_cams = int(re.findall(r"[-+]?\d*\.\d+|\d+", line)[0])
+    def read_cameras_and_meta(cls, cameras_txt_path):
+        # with open(self.base_folder + '/annotations/' + self.split + '/InterHand2.6M_' + split + '_camera.json') as f:
+        with open(
+                '/itet-stor/azhuavlev/net_scratch/Projects/Data/Interhand_masked/annotations/test/InterHand2.6M_test_camera.json',
+                'r') as f:
+            camera_params_dict = json.load(f)
 
-            for _ in tqdm(range(num_cams), desc='reading cameras'):
-                elems = fid.readline().split()
-                camera_id = int(elems[0])
-                if elems[1] == 'SIMPLE_RADIAL':
-                    width, height, focal_length, cx, cy, radial = list(map(float, elems[2:]))
-                    cur_cam = PinholeCamera(width, height, focal_length, focal_length, cx, cy)
-                elif elems[1] == 'PINHOLE':
-                    width, height, fx, fy, cx, cy = list(map(float, elems[2:]))
-                    cur_cam = PinholeCamera(width, height, fx, fy, cx, cy)
-                elif elems[1] == 'OPENCV':
-                    width, height, fx, fy, cx, cy, k1, k2, k3, k4 = list(map(float, elems[2:]))
-                    cur_cam = PinholeCamera(width, height, fx, fy, cx, cy)
-                else:
-                    raise ValueError(f'unsupported camera: {elems[1]}')
-                assert camera_id not in cameras
-                cameras[camera_id] = cur_cam
-        return cameras
+        # camera_ids = ['400262', '400263', '400264', '400265', '400284']
+        capture_n = '0'
+        data_path = '/home/azhuavlev/Desktop/Data/InterHand_Neuman/01/'
+
+        with open(data_path+'mapping.json', 'r') as f:
+            cam_img_mapping = json.load(f)
+
+        cameras = {}
+        images_meta = {}
+
+        # print(json.dumps(cam_img_mapping, indent=4, sort_keys=True))
+        # exit()
+
+        for new_camera_id in sorted(cam_img_mapping.keys()):
+            # print(type(camera_id))
+            # exit()
+
+            old_camera_id = cam_img_mapping[str(new_camera_id)]['old_camera_id']
+            new_camera_id = int(new_camera_id)
+
+
+            # load camera parameters
+            campos = camera_params_dict[capture_n]['campos'][old_camera_id]
+            campos = np.array(campos, dtype=np.float32) / 1000.0 # convert to meters
+            camrot = camera_params_dict[capture_n]['camrot'][old_camera_id]
+            focal = camera_params_dict[capture_n]['focal'][old_camera_id] # for x and y
+            princpt = camera_params_dict[capture_n]['princpt'][old_camera_id] # for x and y
+
+            # get image size
+            width, height = 334, 512
+
+            cur_cam = PinholeCamera(width, height, focal[0], focal[1], princpt[0], princpt[1])
+            # logging.debug(f'camera {camera_id}:\n{cur_cam}')
+            cameras[new_camera_id] = cur_cam
+
+            # camera_folder = pose_path + '/' + f'cam{camera_id}'
+            img_list = cam_img_mapping[str(new_camera_id)]['images_list']
+
+            for img_dict in img_list:
+                old_img_name = img_dict['old_img_name']
+                new_img_name = img_dict['new_img_name']
+
+                image_path = data_path + 'images/' + new_img_name
+
+                t = Translation(np.array(campos, dtype=np.float32))
+
+                # call Rotation.from_matrix to convert the rotation matrix to a quaternion, pass camrot (2d list) as ndarray
+                r = Rotation.from_matrix(np.array(camrot, dtype=np.float32))
+                camera_pose = CameraPose(t, r)
+                # logging.debug(f'camera pose:\n{camera_pose}')
+
+                image_id = int(f"{new_img_name[:-4]}")
+                images_meta[image_id] = ImageMeta(image_id, camera_pose, new_camera_id, image_path, old_img_name)
+                # print(images_meta[image_id], images_meta[image_id].camera_pose)
+                # print(f"{new_img_name[:-3]}", camera_pose, camera_id, image_path, old_img_name)
+
+
+        # print(cameras)
+        return cameras, images_meta
+
 
     @classmethod
     def read_images_meta(cls, images_txt_path, images_dir):
@@ -147,3 +194,6 @@ class ColmapAsciiReader():
                 assert image_id not in images_meta, f'duplicated image, id: {image_id}, path: {image_path}'
                 images_meta[image_id] = ImageMeta(image_id, camera_pose, camera_id, image_path)
         return images_meta
+
+if __name__=='__main__':
+    ColmapAsciiReader.read_captures('1', '2', 's', None, 'video')
