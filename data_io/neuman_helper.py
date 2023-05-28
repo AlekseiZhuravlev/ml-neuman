@@ -277,41 +277,32 @@ class NeuManReader():
         Ts = []
 
         for cap in caps:
+            # get frame id from the image name
             frame_id = int(os.path.basename(cap.image_path)[:-4])
             # assert 0 <= frame_id < len(caps)
 
-            # get smpl for the current frame
+            # get mano for the current frame
             with open(os.path.join(scene_dir, 'mano', f'{frame_id:05d}.json'), 'r') as f:
                 mano_param = json.load(f)['left']
 
-            #
-            # get smpl for the current frame
+            # get mano pose and reshape it
             mano_pose = torch.FloatTensor(mano_param['pose']).view(-1, 3)
 
-            # print(mano_pose)
+            # root pose is at position 0, pose of rest of the hand is at positions [1:]
             root_pose = mano_pose[0].view(1, 3)
             hand_pose = mano_pose[1:, :].view(1, -1)
+
+            # get betas (called shapes here) and translation vector
             shape = torch.FloatTensor(mano_param['shape']).view(1, -1)
             trans = torch.FloatTensor(mano_param['trans']).view(1, 3)
 
-            # print('root_pose', root_pose)
-            # print('hand_pose', hand_pose)
-            # print('shape', shape)
-            # print('trans', trans)
+            # render the hand in scene pose, get vertices and joints
             output = hand_model(global_orient=root_pose, hand_pose=hand_pose, betas=shape, transl=trans)
             scene_pose_verts = output.vertices
             scene_pose_joints = output.joints
-            # print('vertices', scene_pose_verts.shape)
-            # print('joints', scene_pose_joints.shape)
-            #
-            # print('vertices', scene_pose_verts)
-            # print('joints', scene_pose_joints)
-
-            # print('T_t2pose', T_t2pose.shape)
-            # print(T_t2pose)
 
 
-           # get vertices and joints of the DA pose
+           # render zero pose, get vertices and joints of the zero pose
             output = hand_model(
                 global_orient=torch.zeros_like(root_pose),
                 hand_pose=torch.zeros_like(hand_pose),
@@ -320,39 +311,8 @@ class NeuManReader():
             )
             zero_pose_verts, zero_pose_joints = output.vertices, output.joints
 
-            scene_verts_joints = ray_utils.to_homogeneous(np.concatenate([scene_pose_verts[0], scene_pose_joints[0]], axis=0))
-            zero_pose_verts_joints = ray_utils.to_homogeneous(np.concatenate([zero_pose_verts[0], zero_pose_joints[0]], axis=0))
-
-            # print('scene_verts_joints.shape', scene_verts_joints.shape)
-            # print('pinv t_pose_verts_joints.shape', np.linalg.pinv(t_pose_verts_joints).shape)
-
-            T_t2pose = []
-            # calculate 3x4 matrix, then add 1 to the right bottom and zeros
-            for i in range(scene_verts_joints.shape[0]):
-                scene_params = scene_verts_joints[i][:3][None].T
-                zero_pose_params = zero_pose_verts_joints[i][None].T
-
-                T = scene_params.dot(np.linalg.pinv(zero_pose_params))
-                T_homo = np.eye(4)
-                T_homo[:3, :4] = T
-                # print('T.shape', T.shape)
-                # print('T', T)
-
-                # print('T_homo', T_homo)
-                # print('T_t2pose', T_t2pose[i])
-                # print('scene_params', scene_params)
-                # print('T_homo @ t_pose_params', T_homo @ zero_pose_params)
-
-                T_t2pose.append(T_homo)
-
-
-                # print(scene_params == T @ t_pose_params)
-                # print('scene_params', scene_params)
-                # print('T @ t_pose_params', T @ t_pose_params)
-
-            T_t2pose = np.array(T_t2pose)
-
-
+            # get transformation matrices from zero pose to scene pose
+            _, T_t2pose = hand_model.verts_transformations(global_orient=root_pose, hand_pose=hand_pose, betas=shape, transl=trans)
 
             # this is batch matrix multiplication, from old smpl code
             # I used it for testing the new T_t2pose calculation method. Test runs successfully
@@ -369,22 +329,19 @@ class NeuManReader():
             #     print('temp_world_verts[i]', temp_world_verts[i])
             #     print('vertices[i]', scene_pose_verts[0][i])
             #     print('temp_world_verts[i] == vertices[i]', temp_world_verts[i] == scene_pose_verts[0][i], '\n')
-
+            #
             # exit(0)
-            # joints of the frame pose
 
-            # TODO reshape?
-            temp_smpl = {}
-            temp_smpl['pose'] = mano_pose.reshape(-1).numpy()
-            temp_smpl['betas'] = shape[0].numpy()
-            temp_smpl['trans'] = trans[0].numpy()
+            # create a dictionary with all the data for the current frame
+            temp_smpl = {
+                'pose': mano_pose.reshape(-1).numpy(),
+                'betas': shape[0].numpy(),
+                'trans': trans[0].numpy(),
+                'joints_3d': scene_pose_joints[0].numpy(),
+                # these joints are in the zero pose, they were used in original smpl code for rendering standing pose
+                'static_joints_3d': zero_pose_joints[0].numpy()
+            }
 
-            temp_smpl['joints_3d'] = scene_pose_joints[0].numpy()
-            # joints of the DA pose. They are
-            temp_smpl['static_joints_3d'] = zero_pose_joints[0].numpy()
-
-            # print(scene_pose_verts[0].shape)
-            # exit(0)
             # add results for each frame to the arrays
             smpls.append(temp_smpl)
             Ts.append(T_t2pose)

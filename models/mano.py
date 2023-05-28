@@ -11,6 +11,7 @@ from typing import Optional, Dict, Union
 
 from models.smpl import lbs as lbs_custom
 from utils import utils, ray_utils
+import numpy as np
 
 
 class MANOCustom(smplx.MANO):
@@ -29,20 +30,25 @@ class MANOCustom(smplx.MANO):
             return_tensor=True,
             concat_joints=False,
             **kwargs):
+        """
+        Calculate 4x4 affine transformation matrices for each vertex, zero pose -> scene pose
+        """
 
+        # render the scene pose, get vertices and joints
         output = self(global_orient=global_orient, hand_pose=hand_pose, betas=betas, transl=transl)
         scene_pose_verts = output.vertices
         scene_pose_joints = output.joints
 
-        # get vertices and joints of the DA pose
-        output = hand_model(
-            global_orient=torch.zeros_like(root_pose),
+        # render the zero pose, get vertices and joints
+        output = self(
+            global_orient=torch.zeros_like(global_orient),
             hand_pose=torch.zeros_like(hand_pose),
             betas=betas,  # torch.zeros_like(shape),
             transl=torch.zeros_like(transl)
         )
         zero_pose_verts, zero_pose_joints = output.vertices, output.joints
 
+        # concatenate vertices and joints, convert to homogeneous coordinates (add 1 to the right)
         scene_verts_joints = ray_utils.to_homogeneous(
             np.concatenate([scene_pose_verts[0], scene_pose_joints[0]], axis=0))
         zero_pose_verts_joints = ray_utils.to_homogeneous(
@@ -51,10 +57,16 @@ class MANOCustom(smplx.MANO):
         T_t2pose = []
         # calculate 3x4 matrix, then add 1 to the right bottom and zeros
         for i in range(scene_verts_joints.shape[0]):
+            # get vertices+joints array of scene pose, drop the last 1, transpose to get 3x1 vector
             scene_params = scene_verts_joints[i][:3][None].T
+
+            # get vertices+joints array of zero pose, transpose to get 4x1 vector
             zero_pose_params = zero_pose_verts_joints[i][None].T
 
+            # calculate 3x4 transformation matrix
             T = scene_params.dot(np.linalg.pinv(zero_pose_params))
+
+            # convert to 4x4 matrix with the last row [0, 0, 0, 1]
             T_homo = np.eye(4)
             T_homo[:3, :4] = T
 
