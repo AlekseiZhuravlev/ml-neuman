@@ -16,8 +16,10 @@ from geometry import pcd_projector
 from cameras import captures as captures_module, contents
 from scenes import scene as scene_module
 from utils import utils, ray_utils
-from models.smpl import SMPL
+from models.mano import MANOCustom
 
+import json
+import torch
 
 class NeuManCapture(captures_module.RigRGBDPinholeCapture):
     def __init__(self, image_path, depth_path, mask_path, pinhole_cam, cam_pose, view_id, cam_id, mono_depth_path=None, keypoints_path=None, densepose_path=None):
@@ -225,7 +227,7 @@ class NeuManReader():
         captures, point_cloud, num_views, num_cams = cls.read_captures(scene_dir, tgt_size, mask_dir=mask_dir, keypoints_dir=keypoints_dir, densepose_dir=densepose_dir)
         scene = scene_module.RigCameraScene(captures, num_views, num_cams)
         scene.point_cloud = point_cloud
-        update_near_far(scene, ['bkg'], bkg_range_scale)
+        # update_near_far(scene, ['bkg'], bkg_range_scale)
 
         if normalize:
             fars = []
@@ -257,22 +259,15 @@ class NeuManReader():
 
     @classmethod
     def read_smpls(cls, scene_dir, caps, scale=1, smpl_type='romp'):
-        def extract_smpl_at_frame(raw_smpl, frame_id):
-            out = {}
-            for k, v in raw_smpl.items():
-                try:
-                    out[k] = v[frame_id]
-                except:
-                    out[k] = None
-            return out
 
         device = torch.device('cpu')
 
-        # smpl model
-        body_model = SMPL(
-            os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')), 'data/smplx/smpl'),
-            gender='neutral',
-            device=device
+        # mano model
+        hand_model = MANOCustom(
+            model_path='/home/azhuavlev/Desktop/Data/models/mano/MANO_LEFT.pkl',
+            is_rhand=False,
+            device=device,
+            use_pca=False,
         )
 
         # arrays which will later be exported
@@ -281,92 +276,120 @@ class NeuManReader():
         world_verts = []
         Ts = []
 
-        # file name assigment
-        smpl_path = os.path.join(scene_dir, f'smpl_output_{smpl_type}.pkl')
-        assert os.path.isfile(smpl_path), f'{smpl_path} is missing'
-        print(f'using {smpl_type} smpl')
-
-        # load smpl output for each frame
-        raw_smpl = joblib.load(smpl_path)
-        assert len(raw_smpl) == 1
-        raw_smpl = raw_smpl[list(raw_smpl.keys())[0]]
-
-        # read alignments for each frame
-        raw_alignments = np.load(os.path.join(scene_dir, 'alignments.npy'), allow_pickle=True).item()
-
         for cap in caps:
             frame_id = int(os.path.basename(cap.image_path)[:-4])
             # assert 0 <= frame_id < len(caps)
 
             # get smpl for the current frame
-            temp_smpl = extract_smpl_at_frame(raw_smpl, frame_id)
+            with open(os.path.join(scene_dir, 'mano', f'{frame_id:05d}.json'), 'r') as f:
+                mano_param = json.load(f)['left']
 
-            # affine transformation matrix for the current frame,
-            # I guess from (0,0,0) to the body position
-            temp_alignment = np.eye(4)
-            temp_alignment[:, :3] = raw_alignments[os.path.basename(cap.image_path)]
+            #
+            # get smpl for the current frame
+            mano_pose = torch.FloatTensor(mano_param['pose']).view(-1, 3)
 
-            # 大 pose
-            # get (72,) vector of ZEROS, convert it to (24,3) vector, replace [1] and [2] values (right and left hip)
-            # and reshape it back to (72,) vector
-            # i.e. spread the legs of T-pose
-            da_smpl = np.zeros_like(temp_smpl['pose'][None])
-            da_smpl = da_smpl.reshape(-1, 3)
-            da_smpl[1] = np.array([0, 0, 1.0])
-            da_smpl[2] = np.array([0, 0, -1.0])
-            da_smpl = da_smpl.reshape(1, -1)
+            # print(mano_pose)
+            root_pose = mano_pose[0].view(1, 3)
+            hand_pose = mano_pose[1:, :].view(1, -1)
+            shape = torch.FloatTensor(mano_param['shape']).view(1, -1)
+            trans = torch.FloatTensor(mano_param['trans']).view(1, 3)
 
-            # vertex transformation from T-pose to the frame pose
-            _, T_t2pose = body_model.verts_transformations(
-                return_tensor=False,
-                poses=temp_smpl['pose'][None],
-                betas=temp_smpl['betas'][None],
-                concat_joints=True
+            # print('root_pose', root_pose)
+            # print('hand_pose', hand_pose)
+            # print('shape', shape)
+            # print('trans', trans)
+            output = hand_model(global_orient=root_pose, hand_pose=hand_pose, betas=shape, transl=trans)
+            scene_pose_verts = output.vertices
+            scene_pose_joints = output.joints
+            # print('vertices', scene_pose_verts.shape)
+            # print('joints', scene_pose_joints.shape)
+            #
+            # print('vertices', scene_pose_verts)
+            # print('joints', scene_pose_joints)
+
+            # print('T_t2pose', T_t2pose.shape)
+            # print(T_t2pose)
+
+
+           # get vertices and joints of the DA pose
+            output = hand_model(
+                global_orient=torch.zeros_like(root_pose),
+                hand_pose=torch.zeros_like(hand_pose),
+                betas= shape,#torch.zeros_like(shape),
+                transl=torch.zeros_like(trans)
             )
+            zero_pose_verts, zero_pose_joints = output.vertices, output.joints
 
-            # vertex transformation from T-pose to the DA pose
-            _, T_t2da = body_model.verts_transformations(
-                return_tensor=False,
-                poses=da_smpl,
-                betas=temp_smpl['betas'][None],
-                concat_joints=True
-            )
-            # vertex transformation from DA pose to the frame pose
-            T_da2pose = T_t2pose @ np.linalg.inv(T_t2da)
+            scene_verts_joints = ray_utils.to_homogeneous(np.concatenate([scene_pose_verts[0], scene_pose_joints[0]], axis=0))
+            zero_pose_verts_joints = ray_utils.to_homogeneous(np.concatenate([zero_pose_verts[0], zero_pose_joints[0]], axis=0))
 
-            # update T_da2pose, so now it also positions the body in the frame
-            T_da2scene = temp_alignment.T @ T_da2pose
+            # print('scene_verts_joints.shape', scene_verts_joints.shape)
+            # print('pinv t_pose_verts_joints.shape', np.linalg.pinv(t_pose_verts_joints).shape)
 
-            # rescale
-            s = np.eye(4)
-            s[:3, :3] *= scale
-            T_da2scene = s @ T_da2scene
+            T_t2pose = []
+            # calculate 3x4 matrix, then add 1 to the right bottom and zeros
+            for i in range(scene_verts_joints.shape[0]):
+                scene_params = scene_verts_joints[i][:3][None].T
+                zero_pose_params = zero_pose_verts_joints[i][None].T
 
-            # get vertices and joints of the DA pose
-            da_pose_verts, da_pose_joints = body_model(
-                return_tensor=False,
-                return_joints=True,
-                poses=da_smpl,
-                betas=temp_smpl['betas'][None]
-            )
-            temp_world_verts = np.einsum(
-                'BNi, Bi->BN', T_da2scene,
-                ray_utils.to_homogeneous(
-                    np.concatenate([da_pose_verts, da_pose_joints], axis=0)
-                )
-            )[:, :3].astype(np.float32)
+                T = scene_params.dot(np.linalg.pinv(zero_pose_params))
+                T_homo = np.eye(4)
+                T_homo[:3, :4] = T
+                # print('T.shape', T.shape)
+                # print('T', T)
 
-            temp_world_verts, temp_world_joints = temp_world_verts[:6890, :], temp_world_verts[6890:, :]
+                # print('T_homo', T_homo)
+                # print('T_t2pose', T_t2pose[i])
+                # print('scene_params', scene_params)
+                # print('T_homo @ t_pose_params', T_homo @ zero_pose_params)
+
+                T_t2pose.append(T_homo)
+
+
+                # print(scene_params == T @ t_pose_params)
+                # print('scene_params', scene_params)
+                # print('T @ t_pose_params', T @ t_pose_params)
+
+            T_t2pose = np.array(T_t2pose)
+
+
+
+            # this is batch matrix multiplication, from old smpl code
+            # I used it for testing the new T_t2pose calculation method. Test runs successfully
+            # temp_world_verts = np.einsum(
+            #     'BNi, Bi->BN', T_t2pose,
+            #     ray_utils.to_homogeneous(
+            #         np.concatenate([zero_pose_verts[0], zero_pose_joints[0]], axis=0)
+            #     )
+            # )[:, :3].astype(np.float32)
+            #
+            # temp_world_verts, temp_world_joints = temp_world_verts[:778, :], temp_world_verts[778:, :]
+            #
+            # for i in range(len(temp_world_verts)):
+            #     print('temp_world_verts[i]', temp_world_verts[i])
+            #     print('vertices[i]', scene_pose_verts[0][i])
+            #     print('temp_world_verts[i] == vertices[i]', temp_world_verts[i] == scene_pose_verts[0][i], '\n')
+
+            # exit(0)
             # joints of the frame pose
-            temp_smpl['joints_3d'] = temp_world_joints
-            # joints of the DA pose
-            temp_smpl['static_joints_3d'] = da_pose_joints
 
+            # TODO reshape?
+            temp_smpl = {}
+            temp_smpl['pose'] = mano_pose.reshape(-1).numpy()
+            temp_smpl['betas'] = shape[0].numpy()
+            temp_smpl['trans'] = trans[0].numpy()
+
+            temp_smpl['joints_3d'] = scene_pose_joints[0].numpy()
+            # joints of the DA pose. They are
+            temp_smpl['static_joints_3d'] = zero_pose_joints[0].numpy()
+
+            # print(scene_pose_verts[0].shape)
+            # exit(0)
             # add results for each frame to the arrays
             smpls.append(temp_smpl)
-            Ts.append(T_da2scene)
-            static_verts.append(da_pose_verts)
-            world_verts.append(temp_world_verts)
+            Ts.append(T_t2pose)
+            static_verts.append(zero_pose_verts[0].numpy())
+            world_verts.append(scene_pose_verts[0].numpy())
         return smpls, world_verts, static_verts, Ts
 
     @classmethod
@@ -443,5 +466,5 @@ class NeuManReader():
         return caps, raw_scene.point_cloud, num_views, num_cams
 
 if __name__ == '__main__':
-    result = NeuManReader.read_captures('/home/azhuavlev/Desktop/Data/InterHand_Neuman/01/', tgt_size=None)
+    result = NeuManReader.read_scene('/home/azhuavlev/Desktop/Data/InterHand_Neuman/01/', tgt_size=None)
     # print(result)

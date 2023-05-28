@@ -55,15 +55,22 @@ class InterhandToNeumanConverter:
                              f'{experiment_n}'
         # self.camera_path = self.target_folder + '/camera'
         self.rgb_path = self.target_folder + '/images'
+        self.mano_path = self.target_folder + '/mano'
 
         # check that all cameras have the same number of images
         clear_folder(self.target_folder)
 
         os.makedirs(self.target_folder, exist_ok=True)
+        os.makedirs(self.rgb_path, exist_ok=True)
+        os.makedirs(self.mano_path, exist_ok=True)
         # os.makedirs(self.camera_path, exist_ok=True)
 
         self.curr_img = 0
         self.mapping = dict()
+# '/home/azhuavlev/Desktop/Data/Interhand_masked/annotations/test/'
+        with open(self.base_folder + f'/annotations/{self.split}/InterHand2.6M_{self.split}_MANO_NeuralAnnot.json',
+                  'r') as f:
+            self.mano_dict = json.load(f)
 
     def check_camera_img_count(self):
         """
@@ -100,6 +107,7 @@ class InterhandToNeumanConverter:
                     img = sorted(os.listdir(camera_folder))[j_image]
 
                     self.copy_image(camera_folder, img, self.target_folder + '/' + image_class)
+                    self.create_mano(img)
 
                 # camera_folder = self.pose_path + '/' + f'cam{camera}'
                 # img = sorted(os.listdir(camera_folder))[j_image]
@@ -124,6 +132,13 @@ class InterhandToNeumanConverter:
 
         # rename copied image to curr_img, padded to 5 digits
         # os.system(f'mv {self.rgb_path}/{img} {self.rgb_path}/{self.curr_img:05d}.jpg')
+
+    def create_mano(self, img_name):
+        img_id = img_name[5:-4]
+        mano_params = self.mano_dict[self.capture_n][img_id]
+        with open(f'{self.mano_path}/{self.curr_img:05d}.json', 'w') as f:
+            json.dump(mano_params, f)
+
 
     def update_mapping(self, old_camera_id, new_camera_id, img):
         # self.mapping[f'{self.curr_img:05d}'] = {
