@@ -26,8 +26,6 @@ class ColmapAsciiReader():
     def __init__(self):
         pass
 
-
-
     @classmethod
     def read_scene(cls, scene_dir, images_dir, tgt_size=None, order='default'):
         # point_cloud_path = os.path.join(scene_dir, 'points3D.txt')
@@ -124,12 +122,21 @@ class ColmapAsciiReader():
 
 
             # load camera parameters
-            campos = camera_params_dict[capture_n]['campos'][old_camera_id]
-            campos = np.array(campos, dtype=np.float32) / 1000.0 # convert to meters
-            camrot = camera_params_dict[capture_n]['camrot'][old_camera_id]
+            # campos = camera_params_dict[capture_n]['campos'][old_camera_id]
+            # campos = np.array(campos, dtype=np.float32) / 1000.0 # convert to meters
+            # camrot = camera_params_dict[capture_n]['camrot'][old_camera_id]
             focal = camera_params_dict[capture_n]['focal'][old_camera_id] # for x and y
             princpt = camera_params_dict[capture_n]['princpt'][old_camera_id] # for x and y
 
+            t_vector = np.array(camera_params_dict[capture_n]['campos'][old_camera_id], dtype=np.float32).reshape(3) / 1000
+            R_mat = np.array(camera_params_dict[capture_n]['camrot'][old_camera_id], dtype=np.float32).reshape(3, 3)
+            t_vector = -np.dot(R_mat, t_vector.reshape(3, 1)).reshape(3)
+
+            # print('campos', campos)
+            # print('camrot', camrot)
+            # print('t', t)
+            # print('R', R)
+            # exit()
             # get image size
             width, height = 334, 512
 
@@ -146,10 +153,10 @@ class ColmapAsciiReader():
 
                 image_path = data_path + 'images/' + new_img_name
 
-                t = Translation(np.array(campos, dtype=np.float32))
+                t = Translation(t_vector)
 
                 # call Rotation.from_matrix to convert the rotation matrix to a quaternion, pass camrot (2d list) as ndarray
-                r = Rotation.from_matrix(np.array(camrot, dtype=np.float32))
+                r = Rotation.from_matrix(R_mat)
                 camera_pose = CameraPose(t, r)
                 # logging.debug(f'camera pose:\n{camera_pose}')
 

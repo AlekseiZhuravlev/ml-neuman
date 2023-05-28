@@ -20,6 +20,8 @@ from models.mano import MANOCustom
 
 import json
 import torch
+import matplotlib.pyplot as plt
+from scipy.spatial.transform import Rotation
 
 class NeuManCapture(captures_module.RigRGBDPinholeCapture):
     def __init__(self, image_path, depth_path, mask_path, pinhole_cam, cam_pose, view_id, cam_id, mono_depth_path=None, keypoints_path=None, densepose_path=None):
@@ -215,6 +217,7 @@ class NeuManReader():
                             far = np.percentile(pcd_2d_bkg[:, 2], 95)
                         elif k == 'human':
                             pcd_2d_human = pcd_projector.project_point_cloud_at_capture(scene.verts[view_id], cur_cap, render_type='pcd')
+
                             near = pcd_2d_human[:, 2].min()
                             far = pcd_2d_human[:, 2].max()
                         else:
@@ -223,6 +226,7 @@ class NeuManReader():
                         length = (far - near) * range_scale
                         cur_cap.near[k] = max(0.0, float(center - length / 2))
                         cur_cap.far[k] = float(center + length / 2)
+
 
         captures, point_cloud, num_views, num_cams = cls.read_captures(scene_dir, tgt_size, mask_dir=mask_dir, keypoints_dir=keypoints_dir, densepose_dir=densepose_dir)
         scene = scene_module.RigCameraScene(captures, num_views, num_cams)
@@ -254,7 +258,6 @@ class NeuManReader():
         update_near_far(scene, ['human'], human_range_scale)
 
         assert len(scene.captures) > 0
-
         return scene
 
     @classmethod
@@ -276,7 +279,7 @@ class NeuManReader():
         world_verts = []
         Ts = []
 
-        for cap in caps:
+        for cap in tqdm(caps, desc='Reading MANOs'):
             # get frame id from the image name
             frame_id = int(os.path.basename(cap.image_path)[:-4])
             # assert 0 <= frame_id < len(caps)
