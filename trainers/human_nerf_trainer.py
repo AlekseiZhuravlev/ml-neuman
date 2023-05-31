@@ -106,7 +106,7 @@ def turn_smpl_gradient_off(dp_mask):
     return grad_mask.reshape(-1)
 
 
-class HumanNeRFTrainer():
+class HumanNeRFTrainer:
     def __init__(
         self,
         opt,
@@ -153,8 +153,13 @@ class HumanNeRFTrainer():
             self.lpips_loss_fn = lpips.LPIPS(net='alex').to(next(self.net.parameters()).device)
         self.interval_comp = interval_comp
 
+        # center = mean of wrist, middle1, middle2, middle3
+        # up - calculated from code
         center, up = utils.smpl_verts_to_center_and_up(self.val_dataset.scene.static_vert[0])
+
         render_poses = render_utils.default_360_path(center, up, CANONICAL_CAMERA_DIST, 100)
+
+
         if opt.tgt_size is not None:
             render_size = opt.tgt_size
         else:
@@ -245,12 +250,16 @@ class HumanNeRFTrainer():
             'near':      batch['human_near'].clone().to(device),
             'far':       batch['human_far'].clone().to(device),
         }
+
+        # print('putting batch to device', human_batch['origin'].shape)
         human_samples = ray_utils.ray_to_samples(
             human_batch,
             self.opt.samples_per_ray,
             device=device,
             perturb=self.opt.perturb
         )
+
+        # print('got human samples', human_samples[0].shape)
         human_pts = human_samples[0]
         human_dirs = human_samples[1]
         human_z_vals = human_samples[2]
@@ -260,8 +269,11 @@ class HumanNeRFTrainer():
         cur_time = torch.ones_like(human_pts[..., 0:1]) * batch['cur_view_f'].to(device)
         offset = random.choice(self.net.offset_nets)(torch.cat([human_pts, cur_time], dim=-1))
 
+        # print('got offset', offset.shape)
         # warp points from observation space to canonical space
         mesh, raw_Ts = self.net.vertex_forward(int(batch['cap_id']))
+        # print('got mesh', mesh[0].shape)
+
         human_pts = human_pts.reshape(-1, 3)
         Ts, _, _ = ray_utils.warp_samples_to_canonical_diff(
             human_pts.detach().cpu().numpy(),
@@ -269,12 +281,16 @@ class HumanNeRFTrainer():
             faces=self.val_dataset.scene.captures[batch['cap_id']].posed_mesh_cpu.faces_packed().numpy(),
             T=raw_Ts[0]
         )
+        # print('got Ts', Ts.shape)
+
         can_pts = (Ts @ ray_utils.to_homogeneous(human_pts)[..., None])[:, :3, 0].reshape(human_b, human_n, 3)
         can_pts += offset
         can_dirs = can_pts[:, 1:] - can_pts[:, :-1]
         can_dirs = torch.cat([can_dirs, can_dirs[:, -1:]], dim=1)
         can_dirs = can_dirs / torch.norm(can_dirs, dim=2, keepdim=True)
         human_out = self.net.coarse_human_net(can_pts, can_dirs)
+
+        # print('got human out', human_out.shape)
         return human_pts, human_dirs, human_z_vals, can_pts, can_dirs, human_out
 
     def _color_range_regularization(self, pts, dirs, tgts):
@@ -385,7 +401,9 @@ class HumanNeRFTrainer():
 
         batch = utils.remove_first_axis(batch)
         hit_index = torch.nonzero(batch['is_hit'])[:, 0]
-        _, fine_bkg_dirs, fine_bkg_z_vals, fine_bkg_out = self._eval_bkg_samples(batch, device)
+        # _, fine_bkg_dirs, fine_bkg_z_vals, fine_bkg_out = self._eval_bkg_samples(batch, device)
+
+        # print('_eval_human_samples', 'device', device)
         _, human_dirs, human_z_vals, can_pts, can_dirs, human_out = self._eval_human_samples(batch, device)
 
         # canonical space should be symmetric in terms of occupancy
@@ -411,9 +429,11 @@ class HumanNeRFTrainer():
         if self.penalize_sharp_edge > 0 or self.penalize_hard_surface > 0:
             loss_dict['sparsity_reg'] = loss_dict['sparsity_reg'] + self._sparsity_regularization(device)
 
+
         # RGB loss
-        fine_total_zvals, fine_order = torch.sort(torch.cat([fine_bkg_z_vals, human_z_vals], -1), -1)
-        fine_total_out = torch.cat([fine_bkg_out, human_out], 1)
+        fine_total_zvals, fine_order = torch.sort(human_z_vals, -1)
+        fine_total_out = human_out
+
         _b, _n, _c = fine_total_out.shape
         fine_total_out = fine_total_out[
             torch.arange(_b).view(_b, 1, 1).repeat(1, _n, _c),
@@ -423,7 +443,8 @@ class HumanNeRFTrainer():
         fine_rgb_map, _, _, _, _ = render_utils.raw2outputs(
             fine_total_out,
             fine_total_zvals,
-            fine_bkg_dirs[:, 0, :],
+            # was: fine_bkg_dirs[:, 0, :],
+            human_dirs[:, 0, :],
             white_bkg=self.opt.white_bkg
         )
         loss_dict['fine_rgb_loss'] = loss_dict['fine_rgb_loss'] + F.mse_loss(fine_rgb_map[hit_index.to(device)], batch['color'][hit_index].to(device))
@@ -433,6 +454,9 @@ class HumanNeRFTrainer():
             temp_lpips_loss = self.lpips_loss_fn(fine_rgb_map[:PATCH_SIZE_SQUARED].reshape(PATCH_SIZE, PATCH_SIZE, -1).permute(2, 0, 1)*2-1, batch['color'][:PATCH_SIZE_SQUARED].to(device).reshape(PATCH_SIZE, PATCH_SIZE, -1).permute(2, 0, 1)*2-1) * self.penalize_lpips
             assert torch.numel(temp_lpips_loss) == 1
             loss_dict['lpips_loss'] = loss_dict['lpips_loss'] + temp_lpips_loss.flatten()[0]
+
+        # print('human_out', human_out)
+        # exit(0)
 
         # restart if the network is dead
         if human_out[..., 3].max() <= 0.0:
@@ -448,6 +472,8 @@ class HumanNeRFTrainer():
     def validate_batch(self, batch):
         self.optim.zero_grad()
         assert self.net.training is False
+
+        # print('validate_batch', batch['color'].shape)
         with torch.no_grad():
             loss_dict = self.loss_func(batch)
             loss_dict['rgb_loss'] = loss_dict['fine_rgb_loss'] + loss_dict['color_range_reg'] + loss_dict['lpips_loss']
@@ -543,20 +569,31 @@ class HumanNeRFTrainer():
         '''train for one batch of data
         '''
         self.optim.zero_grad()
+
+        # calculate losses
         loss_dict, fine_rgb_map = self.loss_func(batch, return_rgb=True)
+
+        # calculate rgb and canonical loss
         loss_dict['rgb_loss'] = loss_dict['fine_rgb_loss'] + loss_dict['color_range_reg'] + loss_dict['lpips_loss']
         loss_dict['can_loss'] = loss_dict['smpl_sym_reg'] + loss_dict['smpl_shape_reg']
+
+        # if we are in the delay phase, only optimize the canonical model, without rgb loss
         if self.iteration >= self.opt.delay_iters:
             loss_dict['total_loss'] = loss_dict['rgb_loss'] + loss_dict['can_loss'] + loss_dict['mask_loss'] + loss_dict['sparsity_reg']
         else:
             loss_dict['total_loss'] = loss_dict['can_loss'] + loss_dict['mask_loss'] + loss_dict['sparsity_reg']
+
         losses = {k: v.data.item() for k, v in loss_dict.items()}
 
+        # if loss is nan, skip this iteration
         if np.isnan(loss_dict['total_loss'].data.item()):
             print('loss is nan during training', losses)
             self.optim.zero_grad()
         else:
+            # backprop
             loss_dict['total_loss'].backward()
+
+            # optionally block gradients w.r.t unseen joints
             if self.opt.block_grad:
                 try:
                     cap_id = int(batch['cap_id'].item())
@@ -570,6 +607,9 @@ class HumanNeRFTrainer():
                 except Exception as e:
                     print('failed to block gradients w.r.t unseen joints')
                     print(e)
+                    pass
+
+            # push training data to tensorboard
             self.push_training_data(
                 losses,
                 self.optim.param_groups[0]['lr']
@@ -627,6 +667,8 @@ class HumanNeRFTrainer():
             if self.iteration >= self.max_iter:
                 break
             self.iteration += 1
+
+            exit()
 
     def push_training_data(self, losses, lr):
         tb_datapack = tensorboard_helper.TensorboardDatapack()

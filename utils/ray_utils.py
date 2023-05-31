@@ -22,7 +22,9 @@ def shot_ray(cap, x, y):
 
 def shot_rays(cap, xys):
     z = np.ones((xys.shape[0], 1))
+
     pcd_3d = PointCloudProjectorNp.pcd_2d_to_pcd_3d(xys, z, cap.intrinsic_matrix, cam2world=cap.cam_pose.camera_to_world).astype(np.float32)
+
     orig = np.stack([cap.cam_pose.camera_center_in_world] * xys.shape[0])
     dir = pcd_3d - orig
     dir = dir / np.linalg.norm(dir, axis=1, keepdims=True)
@@ -67,11 +69,29 @@ def warp_samples_to_canonical(pts, verts, faces, T):
 
 
 def warp_samples_to_canonical_diff(pts, verts, faces, T):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # print('Warping samples to canonical space...')
+    # print('pts.shape: ', pts.shape, type(pts))
+    # print('verts.shape: ', verts.shape, type(verts))
+    # print('faces.shape: ', faces.shape, type(faces))
     signed_dist, f_id, closest = igl.signed_distance(pts, verts.detach().cpu().numpy(), faces[:, :3])
+
+    closest = torch.from_numpy(closest).to(device)
+    f_id = torch.from_numpy(f_id).to(device)
+    signed_dist = torch.from_numpy(signed_dist).to(device)
+    T = T.to(device)
+    faces = torch.from_numpy(faces).to(device)
+    verts = verts.to(device)
+
+
+    # print('igl.signed_distance done.')
+    # print('signed_dist.shape: ', signed_dist.shape, type(signed_dist))
+    # print('f_id.shape: ', f_id.shape, type(f_id))
+    # print('closest.shape: ', closest.shape, type(closest))
 
     # differentiable barycentric interpolation
     closest_tri = verts[faces[:, :3][f_id]]
-    closest = torch.from_numpy(closest).float().to(verts.device)
     v0v1 = closest_tri[:, 1] - closest_tri[:, 0]
     v0v2 = closest_tri[:, 2] - closest_tri[:, 0]
     v1v2 = closest_tri[:, 2] - closest_tri[:, 1]
@@ -86,6 +106,17 @@ def warp_samples_to_canonical_diff(pts, verts, faces, T):
     v = torch.bmm(N.unsqueeze(dim=1), C2.unsqueeze(dim=2)).squeeze() / denom
     w = 1 - u - v
     barycentric = torch.stack([u, v, w], dim=1)
+
+    # print('barycentric.shape: ', barycentric.shape, type(barycentric))
+    # print('T.shape: ', T.shape, type(T))
+    # print('faces.shape: ', faces.shape, type(faces))
+    # print('f_id: ', f_id.shape, type(f_id))
+    # print('faces[:, :3][f_id].shape: ', faces[:, :3][f_id].shape, type(faces[:, :3][f_id]))
+
+    # put T, faces, f_id, barycentric on the same device
+
+    # f_id = f_id.to(device)
+    barycentric = barycentric.to(device)
 
     T_interp = (T[faces[:, :3][f_id]] * barycentric[..., None, None]).sum(axis=1)
     T_interp_inv = torch.inverse(T_interp)

@@ -19,7 +19,7 @@ def clear_folder(folder):
 
 class InterhandToNeumanConverter:
     def __init__(self, basefolder, split, capture_n, pose,
-                 cameras_list, experiment_n):
+                 cameras_list, experiment_n, max_images_per_camera):
         """
         :param basefolder: path to the InterHand dataset
         :param split: 'train', 'test' or 'val'
@@ -72,6 +72,8 @@ class InterhandToNeumanConverter:
                   'r') as f:
             self.mano_dict = json.load(f)
 
+        self.max_images_per_camera = max_images_per_camera
+
     def check_camera_img_count(self):
         """
         Check that all cameras have the same number of images
@@ -97,7 +99,8 @@ class InterhandToNeumanConverter:
         """
         Copy images from interhand to neuman format
         """
-        n_images = self.check_camera_img_count()
+        n_images_per_camera = self.check_camera_img_count()
+        n_images = min(n_images_per_camera, self.max_images_per_camera)
 
         for j_image in tqdm(range(n_images)):
             for i_camera, camera in enumerate(self.cameras_list):
@@ -106,7 +109,14 @@ class InterhandToNeumanConverter:
                                     f"Capture{self.capture_n}" + '/' + self.pose + '/' + f'cam{camera}'
                     img = sorted(os.listdir(camera_folder))[j_image]
 
-                    self.copy_image(camera_folder, img, self.target_folder + '/' + image_class)
+                    grayscale = image_class in ['segmentations', 'mono_depth']
+
+                    self.copy_image(
+                        from_path=camera_folder,
+                        img_name=img,
+                        to_path=self.target_folder + '/' + image_class,
+                        grayscale=grayscale)
+
                     self.create_mano(img)
 
                 # camera_folder = self.pose_path + '/' + f'cam{camera}'
@@ -118,13 +128,16 @@ class InterhandToNeumanConverter:
 
         self.save_mapping()
 
-    def copy_image(self, from_path, img_name, to_path):
+    def copy_image(self, from_path, img_name, to_path, grayscale):
         os.makedirs(to_path, exist_ok=True)
         # copy image to rgb folder
         os.system(f'cp {from_path}/{img_name} {to_path}/{img_name}')
 
 
         img_jpg = Image.open(f'{to_path}/{img_name}')
+
+        if grayscale:
+            img_jpg = img_jpg.convert('L')
 
         # save image as png and remove jpg
         img_jpg.save(f'{to_path}/{self.curr_img:05d}.png')
@@ -173,7 +186,8 @@ if __name__ == '__main__':
         cameras_list=['400262', '400263', '400264', '400265', '400284'],
         # val_cameras_frac=0.1,
         # max_cameras=15,
-        experiment_n='01'
+        experiment_n='01',
+        max_images_per_camera=20,
     )
     converter.copy_images()
 

@@ -11,20 +11,20 @@ import numpy as np
 import torch
 
 from utils import ray_utils
-
+from tqdm import tqdm
 
 def export_near_far_cache(opt, scene, geo_threshold, chunk, device):
     h, w = scene.captures[0].shape
-    for cap in scene.captures:
+    for cap in tqdm(scene.captures, desc='exporting near/far cache'):
         save_path = os.path.abspath(os.path.join(scene.captures[0].image_path, f'../../cache/near_far_cache_{os.path.basename(cap.image_path)}_{h}_{w}_{geo_threshold}_{opt.normalize}.npy'))
 
         if not os.path.exists(os.path.dirname(save_path)):
             os.makedirs(os.path.dirname(save_path))
         if os.path.isfile(save_path):
-            print(f'cache file already exists: {save_path}')
+            # print(f'cache file already exists: {save_path}')
             continue
         near_far_cache = np.ones([h, w, 3])
-        print('caching near/far', cap.image_path)
+        # print('caching near/far', cap.image_path)
         coords = np.argwhere(np.ones_like(cap.mask) != 0)[:, ::-1]  # all pixel locations
         orig, dir = ray_utils.shot_rays(cap, coords)
         orig, dir = torch.from_numpy(orig).to(device), torch.from_numpy(dir).to(device)
@@ -33,7 +33,7 @@ def export_near_far_cache(opt, scene, geo_threshold, chunk, device):
             temp_near, temp_far = temp_near.detach().cpu().numpy(), temp_far.detach().cpu().numpy()
             near_far_cache[coords[k:k+chunk, 1], coords[k:k+chunk, 0]] = np.array([temp_near, temp_far, np.ones_like(temp_far)]).T
         np.save(save_path, near_far_cache)
-        print(f'saved cache file to: {save_path}')
+        # print(f'saved cache file to: {save_path}')
 
 
 def load_near_far_cache(opt, scene, geo_threshold):

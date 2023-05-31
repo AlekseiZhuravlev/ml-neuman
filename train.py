@@ -77,7 +77,7 @@ def train_background(opt):
 
 
 def train_human(opt):
-    train_split, val_split, _ = neuman_helper.create_split_files(opt.scene_dir)
+
     train_scene = neuman_helper.NeuManReader.read_scene(
         opt.scene_dir,
         tgt_size=opt.tgt_size,
@@ -87,28 +87,44 @@ def train_human(opt):
         mask_dir=opt.mask_dir,
         smpl_type=opt.smpl_type
     )
-    if opt.geo_threshold < 0:
-        can_bones = []
-        bones = []
-        for i in range(len(train_scene.captures)):
-            bones.append(np.linalg.norm(train_scene.smpls[i]['joints_3d'][3] - train_scene.smpls[i]['joints_3d'][0]))
-            can_bones.append(np.linalg.norm(train_scene.smpls[i]['static_joints_3d'][3] - train_scene.smpls[i]['static_joints_3d'][0]))
-        opt.geo_threshold = np.mean(bones)
+    train_split, val_split, _ = neuman_helper.create_split_files(train_scene, opt.scene_dir)
+
+    opt.geo_threshold = 1
+    # if opt.geo_threshold < 0:
+    #     can_bones = []
+    #     bones = []
+    #     for i in range(len(train_scene.captures)):
+    #         bones.append(np.linalg.norm(train_scene.smpls[i]['joints_3d'][3] - train_scene.smpls[i]['joints_3d'][0]))
+    #         can_bones.append(np.linalg.norm(train_scene.smpls[i]['static_joints_3d'][3] - train_scene.smpls[i]['static_joints_3d'][0]))
+    #     opt.geo_threshold = np.mean(bones) / np.mean(can_bones)
+
     poses = np.stack([item['pose'] for item in train_scene.smpls])
     betas = np.stack([item['betas'] for item in train_scene.smpls])
-    raw_alignments = np.load(os.path.join(opt.scene_dir, 'alignments.npy'), allow_pickle=True).item()
-    alignments = np.stack([raw_alignments[os.path.basename(cap.image_path)] for cap in train_scene.captures])
-    alignments2 = np.stack([np.eye(4)] * alignments.shape[0])
-    alignments2[..., :3] = alignments
-    net = human_nerf.HumanNeRF(opt, poses.copy(), betas.copy(), alignments2.copy(), scale=train_scene.scale)
+    transes = np.stack([item['trans'] for item in train_scene.smpls])
+
+    # create main network
+    net = human_nerf.HumanNeRF(opt, poses.copy(), betas.copy(), transes.copy(), scale=train_scene.scale)
+
     device = next(net.parameters()).device
+
     train_scene.read_data_to_ram(data_list=['image', 'depth'])
+
+    # runs binary mask dilation on the border of the mask
     utils.add_border_mask(train_scene, iterations=opt.dilation)
+
     utils.add_pytorch3d_cache(train_scene, device)
+
+    # put scene.verts, scene.Ts to device AND cpu
     utils.move_smpls_to_torch(train_scene, device)
 
+    # near_far cache will be created
     train_dset = human_rays.HumanRayDataset(opt, train_scene, 'train', train_split)
     val_dset = human_rays.HumanRayDataset(opt, train_scene, 'val', val_split, near_far_cache=train_dset.near_far_cache)
+
+    # print('train_dset size: ', len(train_dset))
+    # print(train_dset[2])
+    # print('scene.num_views: ', train_scene.num_views)
+    # exit()
 
     train_loader = DataLoader(
         train_dset,
@@ -125,6 +141,7 @@ def train_human(opt):
         worker_init_fn=utils.worker_init_fn
     )
 
+    # TODO do we need to optimize trans?
     assert opt.bkg_lr == 0
     if opt.train_mode == 'smpl_only':
         assert opt.offset_scale == 0
@@ -148,7 +165,7 @@ def train_human(opt):
         val_loader,
         train_dset,
         val_dset,
-        interval_comp=opt.geo_threshold / np.mean(can_bones)
+        interval_comp=opt.geo_threshold
     )
 
     trainer.train()
@@ -221,8 +238,8 @@ if __name__ == '__main__':
     parser.add_argument('--image_width', type=int, default=None, required=False)
     parser.add_argument('--white_bkg', type=str2bool, default=True, required=False)
 
-    parser.add_argument('--samples_per_ray', default=64, type=int, help='how many samples per ray')
-    parser.add_argument('--importance_samples_per_ray', default=64, type=int, help='how many importance samples per ray')
+    parser.add_argument('--samples_per_ray', default=32, type=int, help='how many samples per ray')
+    parser.add_argument('--importance_samples_per_ray', default=32, type=int, help='how many importance samples per ray')
 
     parser.add_argument('--delay_iters', default=0, type=int, help='delay RGB loss, train with alpha/depth first')
     parser.add_argument('--learning_rate', default=5e-4, type=float, help='NeRF learning rate')
@@ -256,7 +273,9 @@ if __name__ == '__main__':
     if hasattr(opt, 'ablate_nerft') and opt.ablate_nerft:
         assert opt.raw_pos_dim == 4
         assert opt.train_mode == 'bkg'
-    assert opt.normalize == True
+
+
+    #assert opt.normalize == True
 
     options.print_opt(opt)
     options.save_opt(opt)

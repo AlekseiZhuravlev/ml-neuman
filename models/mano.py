@@ -15,16 +15,16 @@ import numpy as np
 
 
 class MANOCustom(smplx.MANO):
-    def __init__(self, device, **kwargs):
+    def __init__(self, **kwargs):
         super(MANOCustom, self).__init__(**kwargs)
-        self.device = device
+        # self.device = device
 
     def verts_transformations(
             self,
-            betas: Optional[Tensor] = None,
-            global_orient: Optional[Tensor] = None,
-            hand_pose: Optional[Tensor] = None,
-            transl: Optional[Tensor] = None,
+            betas,
+            global_orient,
+            hand_pose,
+            transl,
             return_verts: bool = True,
             return_full_pose: bool = False,
             return_tensor=True,
@@ -49,12 +49,20 @@ class MANOCustom(smplx.MANO):
         zero_pose_verts, zero_pose_joints = output.vertices, output.joints
 
         # concatenate vertices and joints, convert to homogeneous coordinates (add 1 to the right)
+        # scene_verts_joints = ray_utils.to_homogeneous(
+        #     np.concatenate([scene_pose_verts[0], scene_pose_joints[0]], axis=0))
+        # zero_pose_verts_joints = ray_utils.to_homogeneous(
+        #     np.concatenate([zero_pose_verts[0], zero_pose_joints[0]], axis=0))
         scene_verts_joints = ray_utils.to_homogeneous(
-            np.concatenate([scene_pose_verts[0], scene_pose_joints[0]], axis=0))
+            torch.cat([scene_pose_verts[0], scene_pose_joints[0]], axis=0))
         zero_pose_verts_joints = ray_utils.to_homogeneous(
-            np.concatenate([zero_pose_verts[0], zero_pose_joints[0]], axis=0))
+            torch.cat([zero_pose_verts[0], zero_pose_joints[0]], axis=0))
 
         T_t2pose = []
+
+        print('scene_verts_joints', scene_verts_joints.shape)
+        print('zero_pose_verts_joints', zero_pose_verts_joints.shape)
+        # exit(0)
         # calculate 3x4 matrix, then add 1 to the right bottom and zeros
         for i in range(scene_verts_joints.shape[0]):
             # get vertices+joints array of scene pose, drop the last 1, transpose to get 3x1 vector
@@ -63,21 +71,33 @@ class MANOCustom(smplx.MANO):
             # get vertices+joints array of zero pose, transpose to get 4x1 vector
             zero_pose_params = zero_pose_verts_joints[i][None].T
 
+            print('scene_params', scene_params.shape, scene_params)
+            print('zero_pose_params', zero_pose_params.shape, zero_pose_params)
+            print('torch.linalg.pinv(zero_pose_params)', torch.linalg.pinv(zero_pose_params).shape, torch.linalg.pinv(zero_pose_params))
             # calculate 3x4 transformation matrix
-            T = scene_params.dot(np.linalg.pinv(zero_pose_params))
+            T = scene_params @ (torch.linalg.pinv(zero_pose_params))
+
+            # print('T', T.shape, T)
 
             # convert to 4x4 matrix with the last row [0, 0, 0, 1]
-            T_homo = np.eye(4)
+            T_homo = torch.eye(4)
             T_homo[:3, :4] = T
 
             T_t2pose.append(T_homo)
 
-        T_t2pose = np.array(T_t2pose)
+            exit(0)
 
+        # T_t2pose = np.array(T_t2pose)
+        # convert list of tensors to tensor
+        # print('len(T_t2pose)', len(T_t2pose), T_t2pose[0].shape)
+        T_t2pose = torch.stack(T_t2pose)
+        # print('T_t2pose.shape', T_t2pose.shape)
+        # exit(0)
         if not return_tensor:
             scene_pose_verts = scene_pose_verts.detach().cpu().numpy()[0]
-        else:
-            T_t2pose = torch.tensor(T_t2pose)
+            T_t2pose = T_t2pose.detach().cpu().numpy()
+        # else:
+        #     T_t2pose = torch.tensor(T_t2pose)
 
         return scene_pose_verts, T_t2pose
 

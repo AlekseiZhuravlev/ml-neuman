@@ -14,8 +14,9 @@ import matplotlib
 from scipy import ndimage
 from tqdm import tqdm
 
-from models.smpl import SMPL, vertices2joints
-
+# from models.smpl import SMPL, vertices2joints
+from models.mano import MANOCustom
+import smplx
 
 def confirm(question='OK to continue?'):
     """
@@ -264,15 +265,25 @@ def add_border_mask(scene, iterations=10):
 
 def smpl_verts_to_center_and_up(verts):
     device = torch.device('cpu')
-    body_model = SMPL(
-        os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')), 'data/smplx/smpl'),
-        gender='neutral',
-        device=device
+
+    hand_model = MANOCustom(
+        model_path='/home/azhuavlev/Desktop/Data/models/mano/MANO_LEFT.pkl',
+        is_rhand=False,
+        device=device,
+        use_pca=False,
     )
-    joints = vertices2joints(body_model.J_regressor, torch.from_numpy(verts)[None]).numpy()[0]
-    spine_ind = [0, 3, 6, 9]
+
+
+    joints = smplx.lbs.vertices2joints(hand_model.J_regressor, torch.from_numpy(verts)[None]).numpy()[0]
+
+    # print('joints', joints.shape, joints)
+    # exit(0)
+
+    # this is wrist, middle1, middle2, middle3
+    spine_ind = [0, 4, 5, 6]
     spine = joints[spine_ind]
     center = spine.mean(axis=0)
+
     _, _, vv = np.linalg.svd(spine - center)
     linepts = vv[0] * np.mgrid[-7:7:2j][:, np.newaxis]
     linepts += center
@@ -310,7 +321,13 @@ def move_smpls_to_torch(scene, device):
         source = sources[i]
         temp = []
         temp_cpu = []
-        for item in source:
+        for j in range(len(source)):
+            item = source[j]
+
+            # if item is tensor, convert to numpy, else pass
+            if isinstance(item, torch.Tensor):
+                item = item.detach().cpu().numpy()
+
             temp.append(torch.from_numpy(item).float().to(device))
             temp_cpu.append(torch.from_numpy(item).float().to('cpu'))
         if i == 0:

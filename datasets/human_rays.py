@@ -14,6 +14,11 @@ from utils import ray_utils
 from utils.constant import PATCH_SIZE, PATCH_SIZE_SQUARED, NEAR_INDEX, FAR_INDEX, TRAIN_SET_LENGTH, VALIDATION_SET_LENGTH
 from data_io import neuman_helper
 
+import argparse
+from options.options import str2bool
+from options import options
+import math
+
 
 def get_left_upper_corner(img, pos, size=PATCH_SIZE):
     '''
@@ -64,6 +69,9 @@ class HumanRayDataset(data.Dataset):
             self.near_far_cache = cache_helper.load_near_far_cache(opt, scene, opt.geo_threshold)
         else:
             self.near_far_cache = near_far_cache
+
+        # print(self.near_far_cache)
+        # exit(0)
         self.num_patch = 1 if opt.penalize_lpips > 0 else 0
         self.cap_id = None
 
@@ -196,6 +204,11 @@ class HumanRayDataset(data.Dataset):
                 human_far = np.stack([[cap.far['human']]] * num_rays)
                 human_near[valid, 0] = cache[valid][:, NEAR_INDEX]
                 human_far[valid, 0] = cache[valid][:, FAR_INDEX]
+
+                # NOTE this is hard coded, we have no background in the dataset
+                if 'bkg' not in cap.near:
+                    cap.near['bkg'] = -1000
+                    cap.far['bkg'] = 1000
                 bkg_near = np.stack([[cap.near['bkg']]] * num_rays)
                 bkg_far = np.stack([[cap.far['bkg']]] * num_rays)
 

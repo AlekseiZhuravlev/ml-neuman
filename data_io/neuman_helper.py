@@ -150,11 +150,11 @@ class ResizedNeuManCapture(captures_module.ResizedRigRGBDPinholeCapture):
         return self.captured_mono_depth.depth_map
 
 
-def create_split_files(scene_dir):
+def create_split_files(dummy_scene, scene_dir):
     # 10% as test set
     # 10% as validation set
     # 80% as training set
-    dummy_scene = NeuManReader.read_scene(scene_dir)
+    # dummy_scene = NeuManReader.read_scene(scene_dir)
     scene_length = len(dummy_scene.captures)
     num_val = scene_length // 5
     length = int(1 / (num_val) * scene_length)
@@ -251,9 +251,11 @@ class NeuManReader():
         scene.scale = scale
         smpls, world_verts, static_verts, Ts = cls.read_smpls(scene_dir, scene.captures, scale=scale, smpl_type=smpl_type)
         scene.smpls, scene.verts, scene.static_vert, scene.Ts = smpls, world_verts, static_verts, Ts
+
         _, uvs, faces = utils.read_obj(
-            os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')), 'data/smplx/smpl_uv.obj')
+            '/itet-stor/azhuavlev/net_scratch/Projects/Data/models/mano/uv_maps/MANO_UV_left.obj'
         )
+
         scene.uvs, scene.faces = uvs, faces
         update_near_far(scene, ['human'], human_range_scale)
 
@@ -263,7 +265,7 @@ class NeuManReader():
     @classmethod
     def read_smpls(cls, scene_dir, caps, scale=1, smpl_type='romp'):
 
-        device = torch.device('cpu')
+        device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
         # mano model
         hand_model = MANOCustom(
@@ -361,8 +363,8 @@ class NeuManReader():
             tgt_size,
             order='video',
         )
-        num_views = len(raw_scene.captures) // 5
-        num_cams = 5
+        num_views = len(raw_scene.captures)# // 5
+        num_cams = 1
         counter = 0
         print(num_views, num_cams)
         for view_id in range(num_views):

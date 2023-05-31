@@ -34,13 +34,15 @@ def main_canonical_360(opt):
         bkg_range_scale=opt.bkg_range_scale,
         human_range_scale=opt.human_range_scale
     )
-    if opt.geo_threshold < 0:
-        can_bones = []
-        bones = []
-        for i in range(len(scene.captures)):
-            bones.append(np.linalg.norm(scene.smpls[i]['joints_3d'][3] - scene.smpls[i]['joints_3d'][0]))
-            can_bones.append(np.linalg.norm(scene.smpls[i]['static_joints_3d'][3] - scene.smpls[i]['static_joints_3d'][0]))
-        opt.geo_threshold = np.mean(bones)
+    opt.geo_threshold = 1
+    # if opt.geo_threshold < 0:
+    #     can_bones = []
+    #     bones = []
+    #     for i in range(len(scene.captures)):
+    #         bones.append(np.linalg.norm(scene.smpls[i]['joints_3d'][3] - scene.smpls[i]['joints_3d'][0]))
+    #         can_bones.append(np.linalg.norm(scene.smpls[i]['static_joints_3d'][3] - scene.smpls[i]['static_joints_3d'][0]))
+    #     opt.geo_threshold = np.mean(bones)
+
     net = human_nerf.HumanNeRF(opt)
     weights = torch.load(opt.weights_path, map_location='cpu')
     utils.safe_load_weights(net, weights['hybrid_model_state_dict'])
