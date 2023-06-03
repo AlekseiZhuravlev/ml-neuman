@@ -18,7 +18,7 @@ from options.options import str2bool
 from options import options
 from models import vanilla, human_nerf
 from trainers import vanilla_nerf_trainer, human_nerf_trainer
-
+from torch.profiler import profile, record_function, ProfilerActivity
 
 def train_background(opt):
     assert opt.bkg_rays_ratio == 1
@@ -168,7 +168,16 @@ def train_human(opt):
         interval_comp=opt.geo_threshold
     )
 
-    trainer.train()
+    with profile(activities=[
+        ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True, with_stack=True, profile_memory=True, with_modules=True) as prof:
+        #with record_function("model_inference"):
+        trainer.train()
+
+    profiling_data = prof.key_averages().table(sort_by="cpu_time_total", row_limit=100)
+    print(profiling_data)
+    with open('profiling.txt', 'w') as f:
+        f.write(profiling_data)
+
 
 
 if __name__ == '__main__':

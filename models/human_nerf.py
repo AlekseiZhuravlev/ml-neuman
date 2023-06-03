@@ -86,6 +86,7 @@ class HumanNeRF(nn.Module):
 
         # try to load pretrained background model
         try:
+            raise Exception('not implemented')
             pretrained_bkg = os.path.join(opt.out_dir, opt.load_background, 'checkpoint.pth.tar')
             bkg_weights = torch.load(pretrained_bkg, map_location='cpu')
             utils.safe_load_weights(self.coarse_bkg_net, bkg_weights['coarse_model_state_dict'])
@@ -97,6 +98,7 @@ class HumanNeRF(nn.Module):
 
         # try to load pretrained canonical human model
         try:
+            raise Exception('not implemented')
             pretrained_can = os.path.join(opt.out_dir, opt.load_can, 'checkpoint.pth.tar')
             can_weights = torch.load(pretrained_can, map_location='cpu')
             _can_weights = {}

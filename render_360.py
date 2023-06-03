@@ -74,9 +74,15 @@ def main_canonical_360(opt):
             render_can=True,
             return_mask=False,
             return_depth=False,
-            interval_comp=opt.geo_threshold / np.mean(can_bones)
+            interval_comp=opt.geo_threshold #/ np.mean(can_bones)
         )
-        save_path = os.path.join('./demo', f'canonical_360/{os.path.basename(opt.scene_dir)}', f'out_{str(i).zfill(4)}.png')
+
+        save_path = os.path.join(
+            opt.scene_dir,
+            f'canonical_360',
+            f'out_{str(i).zfill(4)}.png'
+        )
+
         if not os.path.isdir(os.path.dirname(save_path)):
             os.makedirs(os.path.dirname(save_path))
         imageio.imsave(save_path, out)

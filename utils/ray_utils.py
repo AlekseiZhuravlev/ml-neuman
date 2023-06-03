@@ -69,12 +69,15 @@ def warp_samples_to_canonical(pts, verts, faces, T):
 
 
 def warp_samples_to_canonical_diff(pts, verts, faces, T):
+    raise Exception('Do not use old version of warp_samples_to_canonical_diff')
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # print('Warping samples to canonical space...')
     # print('pts.shape: ', pts.shape, type(pts))
     # print('verts.shape: ', verts.shape, type(verts))
     # print('faces.shape: ', faces.shape, type(faces))
+
     signed_dist, f_id, closest = igl.signed_distance(pts, verts.detach().cpu().numpy(), faces[:, :3])
 
     closest = torch.from_numpy(closest).to(device)
@@ -122,6 +125,13 @@ def warp_samples_to_canonical_diff(pts, verts, faces, T):
     T_interp_inv = torch.inverse(T_interp)
 
     return T_interp_inv, f_id, signed_dist
+
+
+def warp_samples_gpu(pts, verts, T):
+    res = torch.cdist(pts, verts)
+    res = torch.argmin(res,dim=1)
+    T_inv = torch.inverse(T)
+    return T_inv[res]
 
 
 def ray_to_samples(ray_batch,

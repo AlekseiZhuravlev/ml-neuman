@@ -26,6 +26,10 @@ from cameras.captures import ResizedPinholeCapture
 from cameras.pinhole_camera import PinholeCamera
 from models.vanilla import weight_reset
 from utils.constant import HARD_SURFACE_OFFSET, PATCH_SIZE, PATCH_SIZE_SQUARED, CANONICAL_ZOOM_FACTOR, CANONICAL_CAMERA_DIST
+import matplotlib.pyplot as plt
+import pickle
+# import Image class
+from PIL import Image
 
 
 LOSS_NAMES = [
@@ -194,8 +198,13 @@ class HumanNeRFTrainer:
                                  desc='Train',
                                  ncols=80):
             self.epoch = epoch
-            time.sleep(2)  # Prevent possible deadlock during epoch transition
+            # time.sleep(2)  # Prevent possible deadlock during epoch transition
             self.train_epoch()
+
+
+            if self.iteration > 100:
+                return
+
             if self.iteration >= self.max_iter:
                 break
 
@@ -244,12 +253,21 @@ class HumanNeRFTrainer:
         return fine_bkg_pts, fine_bkg_dirs, fine_bkg_z_vals, fine_bkg_out
 
     def _eval_human_samples(self, batch, device):
+        """
+        Get output of human Nerf + offset nets, by taking a batch of rays,
+         converting them to samples, warping them to canonical space,
+         and feeding them to Human Nerf
+        """
+
         human_batch = {
             'origin':    batch['origin'].clone().to(device),
             'direction': batch['direction'].clone().to(device),
             'near':      batch['human_near'].clone().to(device),
             'far':       batch['human_far'].clone().to(device),
         }
+
+        # print('human batch', human_batch)
+        # exit()
 
         # print('putting batch to device', human_batch['origin'].shape)
         human_samples = ray_utils.ray_to_samples(
@@ -259,15 +277,27 @@ class HumanNeRFTrainer:
             perturb=self.opt.perturb
         )
 
+
         # print('got human samples', human_samples[0].shape)
         human_pts = human_samples[0]
         human_dirs = human_samples[1]
         human_z_vals = human_samples[2]
         human_b, human_n, _ = human_pts.shape
 
+        # print('human pts', human_pts.shape, human_pts)
+        # print('human dirs', human_dirs.shape, human_dirs)
+        # print('human z vals', human_z_vals.shape, human_z_vals)
+        # exit()
+
         # predict offset
         cur_time = torch.ones_like(human_pts[..., 0:1]) * batch['cur_view_f'].to(device)
         offset = random.choice(self.net.offset_nets)(torch.cat([human_pts, cur_time], dim=-1))
+
+        # print('cur time', cur_time.shape, cur_time)
+        # print('offset', offset.shape, offset)
+
+        # print(dir(self.net.hand_model))
+        # exit()
 
         # print('got offset', offset.shape)
         # warp points from observation space to canonical space
@@ -275,13 +305,28 @@ class HumanNeRFTrainer:
         # print('got mesh', mesh[0].shape)
 
         human_pts = human_pts.reshape(-1, 3)
-        Ts, _, _ = ray_utils.warp_samples_to_canonical_diff(
-            human_pts.detach().cpu().numpy(),
-            verts=mesh[0],
-            faces=self.val_dataset.scene.captures[batch['cap_id']].posed_mesh_cpu.faces_packed().numpy(),
-            T=raw_Ts[0]
-        )
+
+        # old method
+        # Ts_old, _, _ = ray_utils.warp_samples_to_canonical_diff(
+        #     human_pts.detach().cpu().numpy(),
+        #     verts=mesh[0],
+        #     faces=self.val_dataset.scene.captures[batch['cap_id']].posed_mesh_cpu.faces_packed().numpy(),
+        #     T=raw_Ts[0]
+        # )
         # print('got Ts', Ts.shape)
+
+        # new method
+        Ts = ray_utils.warp_samples_gpu(pts=human_pts, verts=mesh[0], T=raw_Ts[0])
+
+        # print('got Ts', Ts.shape)
+
+        # for i in range(Ts.shape[0]):
+        #     print(Ts[i])
+        #     print(Ts_old[i])
+        #     print('diff', Ts[i] - Ts_old[i])
+        #     print('')
+
+        # exit()
 
         can_pts = (Ts @ ray_utils.to_homogeneous(human_pts)[..., None])[:, :3, 0].reshape(human_b, human_n, 3)
         can_pts += offset
@@ -323,11 +368,25 @@ class HumanNeRFTrainer:
         smpl_reg = torch.tensor(0.0, requires_grad=True).float().to(device)
         can_mesh = self.val_dataset.scene.captures[batch['cap_id']].can_mesh
 
+
+        # TODO change to torch
         dist_human, _, _ = igl.signed_distance(
             pts.reshape(-1, 3).detach().cpu().numpy(),
             can_mesh.verts_packed().cpu().numpy(),
             can_mesh.faces_packed().cpu().numpy(),
         )
+        print('can_mesh', type(can_mesh))#can_mesh.shape, can_mesh)
+        print('pts.reshape(-1, 3)', pts.reshape(-1, 3).shape, pts.reshape(-1, 3))
+        print('can_mesh.verts_packed()', can_mesh.verts_packed().shape, can_mesh.verts_packed())
+        print('can_mesh.faces_packed()', can_mesh.faces_packed().shape, can_mesh.faces_packed())
+        print('dist_human', dist_human.shape)
+        print(dist_human)
+
+        raise NotImplementedError('TODO change to torch')
+        exit()
+
+
+
         inside_volume = dist_human < 0
         if inside_volume.sum() > 0:
             smpl_reg = smpl_reg + F.mse_loss(
@@ -339,6 +398,8 @@ class HumanNeRFTrainer:
         if self.penalize_dummy > 0:
             dummy_pts = (torch.rand(pts.shape, dtype=pts.dtype, device=device) - 0.5) * 3
             dummy_out = self.net.coarse_human_net(dummy_pts, dirs)
+
+            # TODO change to torch
             dist_dummy, _, _ = igl.signed_distance(
                 dummy_pts.reshape(-1, 3).detach().cpu().numpy(),
                 can_mesh.verts_packed().cpu().numpy(),
@@ -397,6 +458,10 @@ class HumanNeRFTrainer:
 
     def loss_func(self, batch, return_rgb=False):
         device = next(self.net.parameters()).device
+
+        # print('loss_func', 'device', device)
+        # exit()
+
         loss_dict = {l: torch.tensor(0.0, requires_grad=True).float().to(device) for l in LOSS_NAMES}
 
         batch = utils.remove_first_axis(batch)
@@ -405,6 +470,14 @@ class HumanNeRFTrainer:
 
         # print('_eval_human_samples', 'device', device)
         _, human_dirs, human_z_vals, can_pts, can_dirs, human_out = self._eval_human_samples(batch, device)
+
+        # print('human_dirs', human_dirs)
+        # print('human_z_vals', human_z_vals)
+        # print('can_pts', can_pts)
+        # print('can_dirs', can_dirs)
+        # print('human_out', human_out)
+
+        # exit()
 
         # canonical space should be symmetric in terms of occupancy
         if self.penalize_symmetric_alpha > 0:
@@ -447,6 +520,16 @@ class HumanNeRFTrainer:
             human_dirs[:, 0, :],
             white_bkg=self.opt.white_bkg
         )
+
+        # print('fine_rgb_map[hit_index.to(device)]', fine_rgb_map[hit_index.to(device)].shape, fine_rgb_map[hit_index.to(device)])
+        # print("batch['color'][hit_index].to(device)", batch['color'][hit_index].to(device).shape, batch['color'][hit_index].to(device))
+
+        # how many elements in batch['color'][hit_index] are not equal to  [1., 1., 1.]?
+        # print('hit_index', hit_index.shape, hit_index)
+        # print('batch["color"][hit_index].to(device) != [1., 1., 1.]', (batch['color'][hit_index].cpu().numpy() != [1., 1., 1.]).sum())
+
+        # print('loss', F.mse_loss(fine_rgb_map[hit_index.to(device)], batch['color'][hit_index].to(device)))
+
         loss_dict['fine_rgb_loss'] = loss_dict['fine_rgb_loss'] + F.mse_loss(fine_rgb_map[hit_index.to(device)], batch['color'][hit_index].to(device))
 
         # LPIPS loss
@@ -456,6 +539,9 @@ class HumanNeRFTrainer:
             loss_dict['lpips_loss'] = loss_dict['lpips_loss'] + temp_lpips_loss.flatten()[0]
 
         # print('human_out', human_out)
+        # exit(0)
+
+        # print('fine_rgb_map', fine_rgb_map.shape, fine_rgb_map)
         # exit(0)
 
         # restart if the network is dead
@@ -475,7 +561,40 @@ class HumanNeRFTrainer:
 
         # print('validate_batch', batch['color'].shape)
         with torch.no_grad():
-            loss_dict = self.loss_func(batch)
+            loss_dict, rgb_map = self.loss_func(batch, return_rgb=True)
+
+            # print('rgb_map', rgb_map.shape, rgb_map)
+
+            # get current timestamp
+            ts = time.time()
+
+            origins = batch['direction'].cpu().detach().numpy()
+            colors = rgb_map.cpu().detach().numpy()
+            # clip colors to [0, 1]
+            colors = np.clip(colors, 0.0, 1.0)
+
+            # make a 3d plot of the point cloud
+            fig = plt.figure()
+            ax = fig.add_subplot(111, projection='3d')
+            ax.scatter(origins[:, 0], origins[:, 1], origins[:, 2], c=colors)
+
+            with open(f'/home/azhuavlev/PycharmProjects/ml-neuman_mano/out/images/output_rays_batch_{int(ts / 1000)}.fig.pickle',
+                      'wb') as f:
+                pickle.dump(fig, f)
+
+            colors = batch['color'].cpu().detach().numpy()
+            colors = np.clip(colors, 0.0, 1.0)
+            # make a 3d plot of the point cloud
+            fig = plt.figure()
+            ax = fig.add_subplot(111, projection='3d')
+            ax.scatter(origins[:, 0], origins[:, 1], origins[:, 2], c=colors)
+
+            with open(f'/home/azhuavlev/PycharmProjects/ml-neuman_mano/out/images/input_rays_batch_{int(ts / 1000)}.fig.pickle',
+                      'wb') as f:
+                pickle.dump(fig, f)
+
+            # exit()
+
             loss_dict['rgb_loss'] = loss_dict['fine_rgb_loss'] + loss_dict['color_range_reg'] + loss_dict['lpips_loss']
             loss_dict['can_loss'] = loss_dict['smpl_sym_reg'] + loss_dict['smpl_shape_reg']
             loss_dict['total_loss'] = loss_dict['rgb_loss'] + loss_dict['can_loss'] + loss_dict['mask_loss'] + loss_dict['sparsity_reg']
@@ -568,10 +687,46 @@ class HumanNeRFTrainer:
     def train_batch(self, batch):
         '''train for one batch of data
         '''
+
+        # import torch
+        # import gc
+        # for obj in gc.get_objects():
+        #     try:
+        #         if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+        #             print(type(obj), obj.size())
+        #     except:
+        #         pass
+        #
+        # exit()
+
         self.optim.zero_grad()
 
         # calculate losses
         loss_dict, fine_rgb_map = self.loss_func(batch, return_rgb=True)
+
+        # print('loss_dict', loss_dict)
+        # print('fine_rgb_map', fine_rgb_map.shape, fine_rgb_map)
+
+        # origins = batch['direction'].cpu().detach().numpy()
+        # colors = fine_rgb_map.cpu().detach().numpy()
+        # # make a 3d plot of the point cloud
+        # fig = plt.figure()
+        # ax = fig.add_subplot(111, projection='3d')
+        # ax.scatter(origins[:, 0], origins[:, 1], origins[:, 2], c=colors)
+        #
+        # with open('/home/azhuavlev/PycharmProjects/ml-neuman_mano/out/images/output_rays_batch.fig.pickle', 'wb') as f:
+        #     pickle.dump(fig, f)
+        #
+        # colors = batch['color'].cpu().detach().numpy()
+        # # make a 3d plot of the point cloud
+        # fig = plt.figure()
+        # ax = fig.add_subplot(111, projection='3d')
+        # ax.scatter(origins[:, 0], origins[:, 1], origins[:, 2], c=colors)
+        #
+        # with open('/home/azhuavlev/PycharmProjects/ml-neuman_mano/out/images/input_rays_batch.fig.pickle', 'wb') as f:
+        #     pickle.dump(fig, f)
+        #
+        # exit()
 
         # calculate rgb and canonical loss
         loss_dict['rgb_loss'] = loss_dict['fine_rgb_loss'] + loss_dict['color_range_reg'] + loss_dict['lpips_loss']
@@ -642,33 +797,63 @@ class HumanNeRFTrainer:
                 else:
                     _offset_net.nerf.scale = 0
 
+        return loss_dict['total_loss']
+
     def train_epoch(self):
         '''train for one epoch
         one epoch is iterating the whole training dataset once
         '''
         self.net.train()
-        for batch_idx, data_pack in tqdm.tqdm(enumerate(self.train_loader),
+
+        loss = 0
+        tbar = tqdm.tqdm(enumerate(self.train_loader),
                                               initial=self.iteration % len(
                                                   self.train_loader),
                                               total=len(self.train_loader),
-                                              desc='Train epoch={0}'.format(
-                                                  self.epoch),
+                                              desc=f'Train epoch={self.epoch}, loss={loss:.4f}',
                                               ncols=80,
                                               leave=True,
-                                              ):
+                                              )
+        for batch_idx, data_pack in tbar:
 
-            if self.iteration % self.valid_iter == 0:
-                time.sleep(2)  # Prevent possible deadlock during epoch transition
+            # Make a plot of the rays
+
+            # for i in range(data_pack['is_bkg'].shape[1]):
+            #     print('is_bkg / color', data_pack['is_bkg'][0][i], data_pack['color'][0][i])
+            # print('batch_idx', batch_idx)
+            # print('data_pack', data_pack)
+            # origins = data_pack['direction']
+            # colors = data_pack['color']
+            # make a 3d plot of the point cloud
+            # fig = plt.figure()
+            # ax = fig.add_subplot(111, projection='3d')
+            # ax.scatter(origins[0, :, 0], origins[0, :, 1], origins[0,:, 2], c=colors[0])
+            #
+            # with open('/home/azhuavlev/PycharmProjects/ml-neuman_mano/out/images/input_rays_batch.fig.pickle', 'wb') as f:
+            #     pickle.dump(fig, f)
+
+            # plt.savefig('/home/azhuavlev/PycharmProjects/ml-neuman_mano/out/images/test_rays.png')
+            # exit()
+
+            if self.iteration > 10 and self.iteration % self.valid_iter == 0:
+                #time.sleep(2)  # Prevent possible deadlock during epoch transition
                 with torch.no_grad():
                     self.validate()
 
-            self.train_batch(data_pack)
+            # train for a batch, get total loss
+            loss = self.train_batch(data_pack)
+
+            # update progress bar
+            tbar.set_description(f'Train epoch={self.epoch}, loss={loss:.4f}')
+
+            if self.iteration > 100:
+                return
 
             if self.iteration >= self.max_iter:
                 break
             self.iteration += 1
 
-            exit()
+
 
     def push_training_data(self, losses, lr):
         tb_datapack = tensorboard_helper.TensorboardDatapack()

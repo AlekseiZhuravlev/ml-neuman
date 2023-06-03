@@ -234,6 +234,7 @@ class NeuManReader():
         # update_near_far(scene, ['bkg'], bkg_range_scale)
 
         if normalize:
+            raise NotImplementedError('normalize is not implemented')
             fars = []
             for cap in scene.captures:
                 fars.append(cap.far['bkg'])
