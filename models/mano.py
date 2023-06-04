@@ -159,7 +159,6 @@ class MANOCustom(smplx.MANO):
         hand_pose = (hand_pose if hand_pose is not None else
                      self.hand_pose)
 
-        apply_trans = transl is not None or hasattr(self, 'transl')
         if transl is None:
             if hasattr(self, 'transl'):
                 transl = self.transl

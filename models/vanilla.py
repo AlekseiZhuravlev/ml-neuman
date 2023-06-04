@@ -52,6 +52,7 @@ class Embedder(nn.Module):
         try:
             self.bvals = torch.from_numpy(bvals).float().cuda()
         except:
+            raise Exception('CUDA not available')
             self.bvals = torch.from_numpy(bvals).float()
         if self.include_input:
             out_dim += 3

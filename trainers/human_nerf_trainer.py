@@ -257,17 +257,16 @@ class HumanNeRFTrainer:
         Get output of human Nerf + offset nets, by taking a batch of rays,
          converting them to samples, warping them to canonical space,
          and feeding them to Human Nerf
+
+        all parameters are on cuda, including input batch
         """
 
         human_batch = {
-            'origin':    batch['origin'].clone().to(device),
-            'direction': batch['direction'].clone().to(device),
-            'near':      batch['human_near'].clone().to(device),
-            'far':       batch['human_far'].clone().to(device),
+            'origin':    batch['origin'],
+            'direction': batch['direction'],
+            'near':      batch['human_near'],
+            'far':       batch['human_far'],
         }
-
-        # print('human batch', human_batch)
-        # exit()
 
         # print('putting batch to device', human_batch['origin'].shape)
         human_samples = ray_utils.ray_to_samples(
@@ -279,19 +278,24 @@ class HumanNeRFTrainer:
 
 
         # print('got human samples', human_samples[0].shape)
+
+        # human pts, human dirs, human z vals are on cuda
         human_pts = human_samples[0]
         human_dirs = human_samples[1]
         human_z_vals = human_samples[2]
         human_b, human_n, _ = human_pts.shape
+
+
 
         # print('human pts', human_pts.shape, human_pts)
         # print('human dirs', human_dirs.shape, human_dirs)
         # print('human z vals', human_z_vals.shape, human_z_vals)
         # exit()
 
-        # predict offset
-        cur_time = torch.ones_like(human_pts[..., 0:1]) * batch['cur_view_f'].to(device)
+        # predict offset, cur_time and offset are on cuda
+        cur_time = torch.ones_like(human_pts[..., 0:1]) * batch['cur_view_f']
         offset = random.choice(self.net.offset_nets)(torch.cat([human_pts, cur_time], dim=-1))
+        #
 
         # print('cur time', cur_time.shape, cur_time)
         # print('offset', offset.shape, offset)
@@ -318,7 +322,6 @@ class HumanNeRFTrainer:
         # new method
         Ts = ray_utils.warp_samples_gpu(pts=human_pts, verts=mesh[0], T=raw_Ts[0])
 
-        # print('got Ts', Ts.shape)
 
         # for i in range(Ts.shape[0]):
         #     print(Ts[i])
@@ -420,7 +423,7 @@ class HumanNeRFTrainer:
         return smpl_reg
 
     def _sparsity_regularization(self, device):
-        sparsity_reg = torch.tensor(0.0, requires_grad=True).float().to(device)
+        sparsity_reg = torch.tensor(0.0, requires_grad=True, device=device)
         # pick a random camera
         num_can_rays = 128
         can_cap = random.choice(self.can_caps)
@@ -462,48 +465,55 @@ class HumanNeRFTrainer:
         # print('loss_func', 'device', device)
         # exit()
 
-        loss_dict = {l: torch.tensor(0.0, requires_grad=True).float().to(device) for l in LOSS_NAMES}
+        loss_dict = {l: torch.tensor(0.0, requires_grad=True, device=device, dtype=torch.float32) for l in LOSS_NAMES}
 
         batch = utils.remove_first_axis(batch)
+        for k in batch.keys():
+            if isinstance(batch[k], torch.Tensor):
+                batch[k] = batch[k].to(device)
+
+        # print(batch)
+
+
         hit_index = torch.nonzero(batch['is_hit'])[:, 0]
+
         # _, fine_bkg_dirs, fine_bkg_z_vals, fine_bkg_out = self._eval_bkg_samples(batch, device)
 
         # print('_eval_human_samples', 'device', device)
         _, human_dirs, human_z_vals, can_pts, can_dirs, human_out = self._eval_human_samples(batch, device)
 
-        # print('human_dirs', human_dirs)
-        # print('human_z_vals', human_z_vals)
-        # print('can_pts', can_pts)
-        # print('can_dirs', can_dirs)
-        # print('human_out', human_out)
-
-        # exit()
-
         # canonical space should be symmetric in terms of occupancy
-        if self.penalize_symmetric_alpha > 0:
-            loss_dict['smpl_sym_reg'] = loss_dict['smpl_sym_reg'] + self._smpl_symmetry_regularization(can_pts, can_dirs, human_out)
+        # if self.penalize_symmetric_alpha > 0:
+        #     loss_dict['smpl_sym_reg'] = loss_dict['smpl_sym_reg'] + self._smpl_symmetry_regularization(can_pts, can_dirs, human_out)
 
         # color of the same point should not change too much due to viewing directions
+        # all on cuda
         if self.penalize_color_range > 0:
             loss_dict['color_range_reg'] = loss_dict['color_range_reg'] + self._color_range_regularization(can_pts, can_dirs, human_out)
 
         # the rendered human should be close to the detected human mask
         # loosely enforced, the penalty linearly decrease during training
+        #
         if self.penalize_mask > 0:
             _, _, human_mask, _, _ = render_utils.raw2outputs(human_out, human_z_vals, human_dirs[:, 0, :], white_bkg=self.opt.white_bkg)
-            loss_dict['mask_loss'] = loss_dict['mask_loss'] + F.mse_loss(torch.clamp(human_mask, min=0.0, max=1.0), (1-batch['is_bkg']).float().to(device)) * self.penalize_mask
+            loss_dict['mask_loss'] = loss_dict['mask_loss'] + F.mse_loss(torch.clamp(human_mask, min=0.0, max=1.0), (1.0-batch['is_bkg'].float())) * self.penalize_mask
 
         # alpha inside smpl mesh should be 1
         # alpha outside smpl mesh should be 0
-        if self.penalize_smpl_alpha > 0:
-            loss_dict['smpl_shape_reg'] = loss_dict['smpl_shape_reg'] + self._smpl_shape_regularization(batch, can_pts, can_dirs, human_out)
+        # if self.penalize_smpl_alpha > 0:
+        #     loss_dict['smpl_shape_reg'] = loss_dict['smpl_shape_reg'] + self._smpl_shape_regularization(batch, can_pts, can_dirs, human_out)
 
         # sharp edge loss + hard surface loss
-        if self.penalize_sharp_edge > 0 or self.penalize_hard_surface > 0:
-            loss_dict['sparsity_reg'] = loss_dict['sparsity_reg'] + self._sparsity_regularization(device)
+        # USES NUMPY
+        # if self.penalize_sharp_edge > 0 or self.penalize_hard_surface > 0:
+        #     loss_dict['sparsity_reg'] = loss_dict['sparsity_reg'] + self._sparsity_regularization(device)
 
+        # for l in LOSS_NAMES:
+        #     print(l, loss_dict[l].device)
+        # exit()
 
         # RGB loss
+        # runs on cuda
         fine_total_zvals, fine_order = torch.sort(human_z_vals, -1)
         fine_total_out = human_out
 
@@ -530,11 +540,15 @@ class HumanNeRFTrainer:
 
         # print('loss', F.mse_loss(fine_rgb_map[hit_index.to(device)], batch['color'][hit_index].to(device)))
 
-        loss_dict['fine_rgb_loss'] = loss_dict['fine_rgb_loss'] + F.mse_loss(fine_rgb_map[hit_index.to(device)], batch['color'][hit_index].to(device))
+        loss_dict['fine_rgb_loss'] = loss_dict['fine_rgb_loss'] + F.mse_loss(fine_rgb_map[hit_index], batch['color'][hit_index])
 
-        # LPIPS loss
+        # TODO stopped here
+
+        # LPIPS loss, runs on cuda
         if self.penalize_lpips > 0 and batch['patch_counter'] == 1:
-            temp_lpips_loss = self.lpips_loss_fn(fine_rgb_map[:PATCH_SIZE_SQUARED].reshape(PATCH_SIZE, PATCH_SIZE, -1).permute(2, 0, 1)*2-1, batch['color'][:PATCH_SIZE_SQUARED].to(device).reshape(PATCH_SIZE, PATCH_SIZE, -1).permute(2, 0, 1)*2-1) * self.penalize_lpips
+            temp_lpips_loss = self.lpips_loss_fn(
+                fine_rgb_map[:PATCH_SIZE_SQUARED].reshape(PATCH_SIZE, PATCH_SIZE, -1).permute(2, 0, 1)*2-1,
+                batch['color'][:PATCH_SIZE_SQUARED].reshape(PATCH_SIZE, PATCH_SIZE, -1).permute(2, 0, 1)*2-1) * self.penalize_lpips
             assert torch.numel(temp_lpips_loss) == 1
             loss_dict['lpips_loss'] = loss_dict['lpips_loss'] + temp_lpips_loss.flatten()[0]
 
@@ -549,7 +563,7 @@ class HumanNeRFTrainer:
             print('bad weights, reinitializing')
             self.net.offset_nets.apply(weight_reset)
             self.net.coarse_human_net.apply(weight_reset)
-            loss_dict = {l: torch.tensor(0.0, requires_grad=True).float().to(device) for l in LOSS_NAMES}
+            loss_dict = {l: torch.tensor(0.0, requires_grad=True, device=device, dtype=torch.float32) for l in LOSS_NAMES}
         if return_rgb:
             return loss_dict, fine_rgb_map
         else:
@@ -738,14 +752,14 @@ class HumanNeRFTrainer:
         else:
             loss_dict['total_loss'] = loss_dict['can_loss'] + loss_dict['mask_loss'] + loss_dict['sparsity_reg']
 
-        losses = {k: v.data.item() for k, v in loss_dict.items()}
 
         # if loss is nan, skip this iteration
         if np.isnan(loss_dict['total_loss'].data.item()):
-            print('loss is nan during training', losses)
+            print('loss is nan during training', loss_dict)
             self.optim.zero_grad()
         else:
             # backprop
+
             loss_dict['total_loss'].backward()
 
             # optionally block gradients w.r.t unseen joints
@@ -764,9 +778,11 @@ class HumanNeRFTrainer:
                     print(e)
                     pass
 
+            losses_no_grad = {k: float(loss_dict[k]) for k in loss_dict.keys()}
+
             # push training data to tensorboard
             self.push_training_data(
-                losses,
+                losses_no_grad,
                 self.optim.param_groups[0]['lr']
             )
         self.optim.step()
@@ -797,7 +813,7 @@ class HumanNeRFTrainer:
                 else:
                     _offset_net.nerf.scale = 0
 
-        return loss_dict['total_loss']
+        return float(loss_dict['total_loss'])
 
     def train_epoch(self):
         '''train for one epoch

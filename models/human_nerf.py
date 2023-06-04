@@ -11,6 +11,7 @@ import torch.nn as nn
 from utils import utils, ray_utils
 from models import vanilla
 from models.mano import MANOCustom
+from typing import Optional, Dict, Union
 
 '''
 Extra offset network to compensate the misalignment
@@ -21,7 +22,7 @@ class HumanNeRF(nn.Module):
     def __init__(self, opt, poses=None, betas=None, trans=None, scale=None):
         super().__init__()
 
-        device = torch.device('cuda' if opt.use_cuda else 'cpu')
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # self.coarse_bkg_net, self.fine_bkg_net = vanilla.build_nerf(opt)
         self.offset_nets = nn.ModuleList([vanilla.build_offset_net(opt) for i in range(opt.num_offset_nets)]).to(
@@ -112,12 +113,18 @@ class HumanNeRF(nn.Module):
             print('train from scratch')
 
 
-
-    def vertex_forward(self, idx, pose=None, beta=None, trans=None):
+    def vertex_forward(self,
+                       idx,
+                       pose: Optional[torch.Tensor] = None,
+                       beta: Optional[torch.Tensor] = None,
+                       trans: Optional[torch.Tensor] = None
+                       ):
         """
         Calls ManoCustom.verts_transformations, but returns unsqueezed T_t2pose
         T_t2pose.shape torch.Size([1, 794, 4, 4]) <class 'torch.Tensor'>
         scene_pose_verts.shape torch.Size([1, 778, 3]) <class 'torch.Tensor'>
+
+        all parameters are on cuda
         """
         if pose is None:
             pose = self.poses[idx][None]
@@ -128,37 +135,54 @@ class HumanNeRF(nn.Module):
 
         # TODO add trans as parameter
 
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # assert that pose, beta, trans are torch tensors
+        assert isinstance(pose, torch.Tensor)
+        assert isinstance(beta, torch.Tensor)
+        assert isinstance(trans, torch.Tensor)
 
         # get mano pose and reshape it
-        mano_pose = torch.Tensor(pose).view(-1, 3).to(device)
+        mano_pose = pose.view(-1, 3)
 
         # root pose is at position 0, pose of rest of the hand is at positions [1:]
-        root_pose = mano_pose[0].view(1, 3).to(device)
-        hand_pose = mano_pose[1:, :].view(1, -1).to(device)
+        root_pose = mano_pose[0].view(1, 3)
+        hand_pose = mano_pose[1:, :].view(1, -1)
 
         # get betas (called shapes here) and translation vector
-        shape = torch.Tensor(beta).view(1, -1).to(device)
-        trans = torch.Tensor(trans).view(1, 3).to(device)
+        shape = beta.view(1, -1)
+        trans = trans.view(1, 3)
 
         # render the hand in scene pose, get vertices and joints
         output = self.hand_model(global_orient=root_pose, hand_pose=hand_pose, betas=shape, transl=trans)
         scene_pose_verts = output.vertices
         scene_pose_joints = output.joints
 
-        # render zero pose, get vertices and joints of the zero pose
-        output = self.hand_model(
-            global_orient=torch.zeros_like(root_pose),
-            hand_pose=torch.zeros_like(hand_pose),
-            betas=shape,  # torch.zeros_like(shape),
-            transl=torch.zeros_like(trans)
-        )
-        zero_pose_verts, zero_pose_joints = output.vertices, output.joints
+        # # render zero pose, get vertices and joints of the zero pose
+        # output = self.hand_model(
+        #     global_orient=torch.zeros_like(root_pose),
+        #     hand_pose=torch.zeros_like(hand_pose),
+        #     betas=shape,  # torch.zeros_like(shape),
+        #     transl=torch.zeros_like(trans)
+        # )
+        # zero_pose_verts, zero_pose_joints = output.vertices, output.joints
 
         # get transformation matrices from zero pose to scene pose
         _, T_t2pose = self.hand_model.verts_transformations(global_orient=root_pose, hand_pose=hand_pose, betas=shape,
                                                        transl=trans)
         T_t2pose = T_t2pose.unsqueeze(0)
+
+
+        # print('mano_pose', mano_pose.device)
+        # print('root_pose', root_pose.device)
+        # print('hand_pose', hand_pose.device)
+        # print('shape', shape.device)
+        # print('trans', trans.device)
+        #
+        # print('scene_pose_verts', scene_pose_verts.device)
+        # print('scene_pose_joints', scene_pose_joints.device)
+        # print('T_t2pose', T_t2pose.device)
+        # exit()
+
+
         # print('T_t2pose.shape', T_t2pose.shape, type(T_t2pose))
         # print('scene_pose_verts.shape', scene_pose_verts.shape, type(scene_pose_verts))
         # exit()

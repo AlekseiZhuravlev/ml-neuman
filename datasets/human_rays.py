@@ -251,11 +251,17 @@ class HumanRayDataset(data.Dataset):
             'human_far':     torch.from_numpy(human_far_list).float(),
             'bkg_near':      torch.from_numpy(bkg_near_list).float(),
             'bkg_far':       torch.from_numpy(bkg_far_list).float(),
-            'is_bkg':        torch.from_numpy(is_bkg_list).long(),
-            'is_hit':        torch.from_numpy(is_hit_list).long(),
-            'cur_view_f':    cap.frame_id['frame_id'] / cap.frame_id['total_frames'],
-            'cur_view':      cap.frame_id['frame_id'],
-            'cap_id':        cap_id,
-            'patch_counter': torch.tensor(patch_counter),
+            'is_bkg':        torch.from_numpy(is_bkg_list).int(),
+            'is_hit':        torch.from_numpy(is_hit_list).int(),
+            'cur_view_f':    torch.tensor(cap.frame_id['frame_id'] / cap.frame_id['total_frames'], dtype=torch.float32),
+            'cur_view':      torch.tensor(cap.frame_id['frame_id'], dtype=torch.int32),
+            'cap_id':        torch.tensor(cap_id, dtype=torch.int32),
+            'patch_counter': torch.tensor(patch_counter, dtype=torch.int32),
         }
+
+        # print(
+        #     'cur_view_f', type((cap.frame_id['frame_id'] / cap.frame_id['total_frames'])),
+        #     'cur_view', type(cap.frame_id['frame_id']),
+        #     'cap_id', type(cap_id),
+        # )
         return out

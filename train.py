@@ -43,7 +43,7 @@ def train_background(opt):
         train_dset,
         batch_size=1,
         shuffle=True,
-        num_workers=5,
+        num_workers=3,
         worker_init_fn=utils.worker_init_fn,
     )
     val_loader = DataLoader(
@@ -130,7 +130,7 @@ def train_human(opt):
         train_dset,
         batch_size=1,
         shuffle=True,
-        num_workers=4,
+        num_workers=3,
         worker_init_fn=utils.worker_init_fn,
     )
     val_loader = DataLoader(
@@ -169,13 +169,14 @@ def train_human(opt):
     )
 
     with profile(activities=[
-        ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True, with_stack=True, profile_memory=True, with_modules=True) as prof:
+        ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True, with_stack=False, profile_memory=True, with_modules=True) as prof:
         #with record_function("model_inference"):
         trainer.train()
+    # exit()
 
     profiling_data = prof.key_averages().table(sort_by="cpu_time_total", row_limit=100)
     print(profiling_data)
-    with open('profiling.txt', 'w') as f:
+    with open('profiling_optimized.txt', 'w') as f:
         f.write(profiling_data)
 
 
