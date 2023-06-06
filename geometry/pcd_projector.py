@@ -120,6 +120,50 @@ class PointCloudProjectorNp():
         return xyz
 
     @staticmethod
+    def pcd_2d_to_pcd_3d_torch(pcd, depth, intrinsic, cam2world=None):
+        """
+        Verified, should be equal to numpy version
+        """
+        assert isinstance(pcd, torch.Tensor), f'cannot process data type: {type(pcd)}'
+        assert isinstance(intrinsic, torch.Tensor), f'cannot process data type: {type(intrinsic)}'
+        assert len(pcd.shape) == 2 and pcd.shape[1] >= 2
+        assert len(depth.shape) == 2 and depth.shape[1] == 1
+        assert intrinsic.shape == (3, 3)
+        if cam2world is not None:
+            assert isinstance(cam2world, torch.Tensor), f'cannot process data type: {type(cam2world)}'
+            assert cam2world.shape == (4, 4)
+
+        x, y, z = pcd[:, 0], pcd[:, 1], depth[:, 0]
+        append_ones = torch.ones_like(x)
+        xyz = torch.stack([x, y, append_ones], axis=1)  # shape: [num_points, 3]
+        inv_intrinsic_mat = torch.linalg.inv(intrinsic)
+
+        xyz = xyz.float()
+        xyz = torch.matmul(inv_intrinsic_mat, xyz.T).T * z[..., None]
+
+        valid_mask_1 = torch.where(xyz[:, 2] > 0)
+        xyz = xyz[valid_mask_1]
+
+        if cam2world is not None:
+            append_ones = torch.ones_like(xyz[:, 0:1])
+            xyzw = torch.cat([xyz, append_ones], axis=1)
+            xyzw = torch.matmul(cam2world, xyzw.T).T
+            valid_mask_2 = torch.where(xyzw[:, 3] != 0)
+            xyzw = xyzw[valid_mask_2]
+            xyzw /= xyzw[:, 3:4]
+            xyz = xyzw[:, 0:3]
+
+        if pcd.shape[1] > 2:
+            features = pcd[:, 2:]
+            try:
+                features = features[valid_mask_1][valid_mask_2]
+            except UnboundLocalError:
+                features = features[valid_mask_1]
+            assert xyz.shape[0] == features.shape[0]
+            xyz = torch.cat([xyz, features], axis=1)
+        return xyz
+
+    @staticmethod
     def img_to_pcd_3d(depth, intrinsic, img=None, cam2world=None):
         '''
         the function signature is not fully correct, because img is an optional

@@ -13,13 +13,15 @@ from cameras.pinhole_camera import resize_pinhole_camera
 from cameras import contents
 from geometry import pcd_projector
 from utils import ray_utils
+import torch
 
 
 ################ Pinhole Capture ################
 
 
-class BasePinholeCapture():
+class BasePinholeCapture(torch.nn.Module):
     def __init__(self, pinhole_cam, cam_pose):
+        super().__init__()
         self.cam_pose = cam_pose
         self.pinhole_cam = pinhole_cam
 

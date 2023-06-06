@@ -21,6 +21,7 @@ def shot_ray(cap, x, y):
 
 
 def shot_rays(cap, xys):
+    raise NotImplementedError('Use torch version instead')
     z = np.ones((xys.shape[0], 1))
 
     pcd_3d = PointCloudProjectorNp.pcd_2d_to_pcd_3d(xys, z, cap.intrinsic_matrix, cam2world=cap.cam_pose.camera_to_world).astype(np.float32)
@@ -29,6 +30,23 @@ def shot_rays(cap, xys):
     dir = pcd_3d - orig
     dir = dir / np.linalg.norm(dir, axis=1, keepdims=True)
     return orig, dir
+
+
+def shot_rays_torch(xys, intrinsic_matrix, camera_to_world, camera_center_in_world):
+    z = torch.ones((xys.shape[0], 1), device=xys.device)
+
+    pcd_3d = PointCloudProjectorNp.pcd_2d_to_pcd_3d_torch(
+        xys,
+        z,
+        intrinsic_matrix,
+        cam2world=camera_to_world
+    ).float()
+
+    orig = camera_center_in_world.repeat((xys.shape[0], 1))
+    # print(camera_center_in_world.shape, orig.shape, pcd_3d.shape)
+    dirs = pcd_3d - orig
+    dirs = dirs / torch.linalg.norm(dirs, dim=1, keepdim=True)
+    return orig, dirs
 
 
 def shot_all_rays(cap):

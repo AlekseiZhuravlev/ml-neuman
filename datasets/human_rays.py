@@ -73,7 +73,7 @@ class HumanRayDataset(data.Dataset):
         # print(self.near_far_cache)
         # exit(0)
         self.num_patch = 1 if opt.penalize_lpips > 0 else 0
-        self.cap_id = None
+        # self.cap_id = None
 
     def __len__(self):
         '''
@@ -87,42 +87,68 @@ class HumanRayDataset(data.Dataset):
             raise ValueError
 
     def get_num_rays_dict(self, num):
+        """
+        Return the number of rays for each type of rays.
+
+        Args:
+            num (int): number of rays in total.
+
+        Returns:
+            dict: number of rays for each type of rays.
+            {
+            'num_body_rays': num_body_rays,
+            'num_border_rays': num_border_rays,
+            'num_bkg_rays': num_bkg_rays
+            }
+        """
+
+
+
         num_body_rays = int(round(num * self.opt.body_rays_ratio))
         num_border_rays = int(round(num * self.opt.border_rays_ratio)) if self.opt.dilation > 0 else 0
         num_bkg_rays = int(round(num * self.opt.bkg_rays_ratio))
+
         leftover = num - num_body_rays - num_border_rays - num_bkg_rays
-        arr = np.array([num_body_rays, num_border_rays, num_bkg_rays])
-        arr[arr.argmax()] += leftover
-        num_body_rays, num_border_rays, num_bkg_rays = arr
+        num_body_rays += leftover
+
+        # arr = np.array([num_body_rays, num_border_rays, num_bkg_rays])
+        # arr[arr.argmax()] += leftover
+        # num_body_rays, num_border_rays, num_bkg_rays = arr
+
         assert min(num_body_rays, num_border_rays, num_bkg_rays) >= 0, f'{min(num_body_rays, num_border_rays, num_bkg_rays)}'
-        assert sum(arr) == num, f'{arr}, {leftover}'
+        assert num_body_rays+num_bkg_rays+num_border_rays == num, f'Total number of rays {num} does not match the sum of body rays {num_body_rays}, border rays {num_border_rays} and bkg rays {num_bkg_rays}'
+
         return {
             'num_body_rays': num_body_rays,
             'num_border_rays': num_border_rays,
             'num_bkg_rays': num_bkg_rays,
         }
 
-    def get_num_rays_dict_patch(self, num):
-        assert self.num_patch == 1
-        assert num == PATCH_SIZE_SQUARED
-        return {'num_patch_rays': num}
+    # def get_num_rays_dict_patch(self, num):
+
 
     def __getitem__(self, index):
         '''
         NeRF requires 4K+ rays per gradient decent, so we will return the ray batch directly.
         '''
-        if self.cap_id is None:
-            cap_id = self.scene.fname_to_index_dict[random.choice(self.inclusions)]
-        else:
-            cap_id = self.cap_id
+        # if self.cap_id is None:
+        #     cap_id = self.scene.fname_to_index_dict[random.choice(self.inclusions)]
+        # else:
+        #     cap_id = self.cap_id
+
+        # TODO rewrite to get the capture specified by cap_id, instead of randomly sampling one
+        cap_id = self.scene.fname_to_index_dict[random.choice(self.inclusions)]
+
         assert 0 <= cap_id < len(self.scene.captures)
         caps = self.scene.get_captures_by_view_id(cap_id)
         assert len(caps) == 1, 'one camera per one iteration'
+
+        # make bins for lpips loss
         if self.num_patch == 0:
-            # not sampling patch
+            # do not penalize lpips, not sampling patch
             bins = [self.batch_size]
         elif self.num_patch == 1:
-            # sampline patch
+            # penalize lpips, sampling patch
             # first part of the batch is the sampled patch
             # random rays for the leftover
             assert self.batch_size > PATCH_SIZE_SQUARED
@@ -130,11 +156,14 @@ class HumanRayDataset(data.Dataset):
             caps = [caps[0], caps[0]]
         else:
             raise ValueError('only support 1 patch')
+
+        # TODO: why is this here?
         if random.random() < self.opt.body_rays_ratio:
             need_patch = True
         else:
             need_patch = False
         patch_counter = 0
+
         assert len(caps) == len(bins), f'{len(caps)} != {len(bins)}'
 
         colors_list     = []
@@ -151,16 +180,25 @@ class HumanRayDataset(data.Dataset):
         for cam_id, (cap, num) in enumerate(zip(caps, bins)):
             if num == 0:
                 continue
+
+
             img = cap.image
+
+            # select which rays to sample: patch rays for lpips loss or regular rays for rendering
             if self.num_patch == 1 and need_patch and patch_counter == 0:
-                num_rays_dict = self.get_num_rays_dict_patch(num)
+                # sample patch rays
+                assert num == PATCH_SIZE_SQUARED
+                num_rays_dict = {'num_patch_rays': num}
                 patch_counter += 1
             else:
+                # sample body, border, bkg rays
                 num_rays_dict = self.get_num_rays_dict(num)
 
             for ray_key, num_rays in num_rays_dict.items():
                 if num_rays == 0:
                     continue
+
+                # get ray coordinates
                 if ray_key == 'num_body_rays':
                     coords = np.argwhere(cap.mask != 0)
                 elif ray_key == 'num_border_rays':
@@ -187,17 +225,29 @@ class HumanRayDataset(data.Dataset):
                 else:
                     raise ValueError
 
+                # rearrange coords to (y, x)
                 if ray_key == 'num_patch_rays':
                     coords = coords[:, ::-1]
                 else:
                     coords = coords[np.random.randint(0, len(coords), num_rays)][:, ::-1]  # could get duplicated rays
+
+                # TODO is this necessary?
                 coords_list[cam_id].append(coords)
+
+                # get ray colors
                 colors = (img[coords[:, 1], coords[:, 0]] / 255).astype(np.float32)
+
+                # check if rays are forming a patch
                 if ray_key == 'num_patch_rays':
                     assert (colors.reshape(PATCH_SIZE, PATCH_SIZE, -1) == check).all(), 'rays not forming a patch'
+
+                # check if rays are hitting the background or human
                 is_bkg = 1 - cap.binary_mask[coords[:, 1], coords[:, 0]]
 
+                # get ray origins and directions
                 orig, dir = ray_utils.shot_rays(cap, coords)
+
+                # get human and background near/far
                 cache = self.near_far_cache[os.path.basename(cap.image_path)][coords[:, 1], coords[:, 0]]
                 valid = cache[..., NEAR_INDEX] < cache[..., FAR_INDEX]
                 human_near = np.stack([[cap.near['human']]] * num_rays)

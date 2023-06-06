@@ -31,6 +31,10 @@ import pickle
 # import Image class
 from PIL import Image
 
+from datasets import ray_generation_from_images
+from torch.profiler import profile, record_function, ProfilerActivity
+
+
 
 LOSS_NAMES = [
     'fine_rgb_loss',
@@ -180,6 +184,8 @@ class HumanNeRFTrainer:
             rp,
             tgt_size=render_size
         ) for rp in render_poses]
+
+        self.ray_generator = ray_generation_from_images.RaysFromImagesGenerator(opt)
 
     def push_opt_to_tb(self):
         opt_str = options.opt_to_string(self.opt)
@@ -467,10 +473,12 @@ class HumanNeRFTrainer:
 
         loss_dict = {l: torch.tensor(0.0, requires_grad=True, device=device, dtype=torch.float32) for l in LOSS_NAMES}
 
-        batch = utils.remove_first_axis(batch)
-        for k in batch.keys():
-            if isinstance(batch[k], torch.Tensor):
-                batch[k] = batch[k].to(device)
+        # batch = utils.remove_first_axis(batch)
+
+        # # place data on device
+        # for k in batch.keys():
+        #     if isinstance(batch[k], torch.Tensor):
+        #         batch[k] = batch[k].to(device)
 
         # print(batch)
 
@@ -569,9 +577,21 @@ class HumanNeRFTrainer:
         else:
             return loss_dict
 
-    def validate_batch(self, batch):
+    def validate_batch(self, raw_batch):
         self.optim.zero_grad()
         assert self.net.training is False
+
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # squeeze batch dim and move to device
+        for k in raw_batch.keys():
+            if isinstance(raw_batch[k], torch.Tensor):
+                raw_batch[k] = raw_batch[k][0].to(device)
+            else:
+                raise ValueError(f'raw_batch[{k}] is not a tensor')
+
+        batch = self.ray_generator.generate_rays_from_images(raw_batch)
+        print('validation batch', batch)
+        exit()
 
         # print('validate_batch', batch['color'].shape)
         with torch.no_grad():
@@ -698,7 +718,7 @@ class HumanNeRFTrainer:
         tb_datapack.add_image({'render/val': render})
         self.tb_pusher.push_to_tensorboard(tb_datapack)
 
-    def train_batch(self, batch):
+    def train_batch(self, raw_batch):
         '''train for one batch of data
         '''
 
@@ -713,6 +733,25 @@ class HumanNeRFTrainer:
         #
         # exit()
 
+        with profile(activities=[
+            ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True, with_stack=False, profile_memory=True,
+                with_modules=True) as prof:
+
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            # squeeze batch dim and move to device
+            for k in raw_batch.keys():
+                if isinstance(raw_batch[k], torch.Tensor):
+                    raw_batch[k] = raw_batch[k][0].to(device)
+                # else:
+                #     (f'raw_batch[{k}] is not a tensor')
+                elif isinstance(raw_batch[k], np.ndarray):
+                    raise ValueError(f'raw_batch[{k}] is a numpy array')
+
+            batch = self.ray_generator.generate_rays_from_images(raw_batch)
+
+        profiling_data = prof.key_averages().table(sort_by="cpu_time_total", row_limit=20)
+        print(profiling_data)
+        exit()
         self.optim.zero_grad()
 
         # calculate losses

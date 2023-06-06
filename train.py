@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 
 from data_io import neuman_helper
 from utils import utils
-from datasets import background_rays, human_rays
+from datasets import background_rays, human_rays, human_images_only, ray_generation_from_images
 from options.options import str2bool
 from options import options
 from models import vanilla, human_nerf
@@ -118,8 +118,36 @@ def train_human(opt):
     utils.move_smpls_to_torch(train_scene, device)
 
     # near_far cache will be created
-    train_dset = human_rays.HumanRayDataset(opt, train_scene, 'train', train_split)
-    val_dset = human_rays.HumanRayDataset(opt, train_scene, 'val', val_split, near_far_cache=train_dset.near_far_cache)
+    # train_dset = human_rays.HumanRayDataset(opt, train_scene, 'train', train_split)
+    # val_dset = human_rays.HumanRayDataset(opt, train_scene, 'val', val_split, near_far_cache=train_dset.near_far_cache)
+
+
+    train_dset = human_images_only.ImagesOnlyDataset(opt, train_scene, 'train', train_split)
+    val_dset = human_images_only.ImagesOnlyDataset(opt, train_scene, 'val', val_split, near_far_cache=train_dset.near_far_cache)
+
+    # train_dset = train_dset.to('cuda')
+    # print(train_dset[0])
+    # exit()
+
+    # images_only_loader = DataLoader(
+    #     images_only_dset,
+    #     batch_size=1,
+    #     shuffle=True,
+    #     num_workers=3,
+    #     worker_init_fn=utils.worker_init_fn,
+    # )
+
+
+    # get an element from the dataloader
+    # for i, data in enumerate(images_only_loader):
+    #     ray_generation_from_images.RaysFromImagesGenerator(opt).generate_rays_from_images(data)
+    #
+    #     # TODO visualize rays
+    #     exit()
+    #
+    #
+    #
+    # exit()
 
     # print('train_dset size: ', len(train_dset))
     # print(train_dset[2])
@@ -168,16 +196,17 @@ def train_human(opt):
         interval_comp=opt.geo_threshold
     )
 
-    with profile(activities=[
-        ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True, with_stack=False, profile_memory=True, with_modules=True) as prof:
+
+    # with profile(activities=[
+    #     ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True, with_stack=False, profile_memory=True, with_modules=True) as prof:
         #with record_function("model_inference"):
-        trainer.train()
+    trainer.train()
     # exit()
 
-    profiling_data = prof.key_averages().table(sort_by="cpu_time_total", row_limit=100)
-    print(profiling_data)
-    with open('profiling_optimized.txt', 'w') as f:
-        f.write(profiling_data)
+    # profiling_data = prof.key_averages().table(sort_by="cpu_time_total", row_limit=20)
+    # print(profiling_data)
+    # with open('profiling_optimized.txt', 'w') as f:
+    #     f.write(profiling_data)
 
 
 
@@ -205,7 +234,7 @@ if __name__ == '__main__':
         parser.add_argument('--ablate_nerft', type=str2bool, default=False, help='vanilla nerf with time')
     else:
         # common args with diferent defaults
-        parser.add_argument('--rays_per_batch', default=1536, type=int, help='how many samples per ray')
+        parser.add_argument('--rays_per_batch', default=4096, type=int, help='how many samples per ray')
         parser.add_argument('--valid_iter', type=int, default=1000, help='interval of validation')
         parser.add_argument('--max_iter', type=int, default=300000, help='total training iterations')
         parser.add_argument('--body_rays_ratio', default=0.95, type=float, help='the percentage of rays on body')
