@@ -21,7 +21,7 @@ def shot_ray(cap, x, y):
 
 
 def shot_rays(cap, xys):
-    raise NotImplementedError('Use torch version instead')
+    # raise NotImplementedError('Use torch version instead')
     z = np.ones((xys.shape[0], 1))
 
     pcd_3d = PointCloudProjectorNp.pcd_2d_to_pcd_3d(xys, z, cap.intrinsic_matrix, cam2world=cap.cam_pose.camera_to_world).astype(np.float32)

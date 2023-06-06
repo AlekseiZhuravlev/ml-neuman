@@ -105,6 +105,12 @@ def train_human(opt):
     # create main network
     net = human_nerf.HumanNeRF(opt, poses.copy(), betas.copy(), transes.copy(), scale=train_scene.scale)
 
+    # make the network parallel
+    net = nn.DataParallel(net)
+    # net = torch.compile(net)
+    # print(net.module.poses)
+    # print(list(net.parameters()))
+
     device = next(net.parameters()).device
 
     train_scene.read_data_to_ram(data_list=['image', 'depth'])
@@ -118,12 +124,72 @@ def train_human(opt):
     utils.move_smpls_to_torch(train_scene, device)
 
     # near_far cache will be created
-    # train_dset = human_rays.HumanRayDataset(opt, train_scene, 'train', train_split)
-    # val_dset = human_rays.HumanRayDataset(opt, train_scene, 'val', val_split, near_far_cache=train_dset.near_far_cache)
+    train_dset = human_rays.HumanRayDataset(opt, train_scene, 'train', train_split)
+    val_dset = human_rays.HumanRayDataset(opt, train_scene, 'val', val_split, near_far_cache=train_dset.near_far_cache)
+
+    train_loader = DataLoader(
+        train_dset,
+        batch_size=2,
+        shuffle=True,
+        num_workers=3,
+        worker_init_fn=utils.worker_init_fn,
+    )
+    val_loader = DataLoader(
+        val_dset,
+        batch_size=1,
+        shuffle=True,
+        num_workers=0,
+        worker_init_fn=utils.worker_init_fn
+    )
+
+    # TODO do we need to optimize trans?
+    assert opt.bkg_lr == 0
+    if opt.train_mode == 'smpl_only':
+        assert opt.offset_scale == 0
+        optim_list = [
+            {"params": net.module.poses, "lr": opt.learning_rate},
+            {"params": net.module.coarse_human_net.parameters(), "lr": opt.learning_rate},
+        ]
+    elif opt.train_mode == 'smpl_and_offset':
+        optim_list = [
+            {"params": net.module.poses, "lr": opt.smpl_lr},
+            {"params": net.module.coarse_human_net.parameters(), "lr": opt.learning_rate},
+            {"params": net.module.offset_nets.parameters(), "lr": opt.learning_rate},
+        ]
+    optim = torch.optim.Adam(optim_list)
+
+    trainer = human_nerf_trainer.HumanNeRFTrainer(
+        opt,
+        net,
+        optim,
+        train_loader,
+        val_loader,
+        train_dset,
+        val_dset,
+        interval_comp=opt.geo_threshold
+    )
+
+    torch.backends.cudnn.benchmark = True
+    torch.jit.enable_onednn_fusion(True)
+
+    # with profile(activities=[
+    #     ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True, with_stack=True, profile_memory=True, with_modules=True) as prof:
+        # with record_function("model_inference"):
+
+    trainer.train()
+    # exit()
+
+    # profiling_data = prof.key_averages().table(sort_by="cpu_time_total", row_limit=20)
+    # print(profiling_data)
+    # with open('profiling_optimized.txt', 'w') as f:
+    #     f.write(profiling_data)
+
+    # prof.export_chrome_trace("trace.json")
 
 
-    train_dset = human_images_only.ImagesOnlyDataset(opt, train_scene, 'train', train_split)
-    val_dset = human_images_only.ImagesOnlyDataset(opt, train_scene, 'val', val_split, near_far_cache=train_dset.near_far_cache)
+
+    # train_dset = human_images_only.ImagesOnlyDataset(opt, train_scene, 'train', train_split)
+    # val_dset = human_images_only.ImagesOnlyDataset(opt, train_scene, 'val', val_split, near_far_cache=train_dset.near_far_cache)
 
     # train_dset = train_dset.to('cuda')
     # print(train_dset[0])
@@ -154,61 +220,6 @@ def train_human(opt):
     # print('scene.num_views: ', train_scene.num_views)
     # exit()
 
-    train_loader = DataLoader(
-        train_dset,
-        batch_size=1,
-        shuffle=True,
-        num_workers=3,
-        worker_init_fn=utils.worker_init_fn,
-    )
-    val_loader = DataLoader(
-        val_dset,
-        batch_size=1,
-        shuffle=True,
-        num_workers=0,
-        worker_init_fn=utils.worker_init_fn
-    )
-
-    # TODO do we need to optimize trans?
-    assert opt.bkg_lr == 0
-    if opt.train_mode == 'smpl_only':
-        assert opt.offset_scale == 0
-        optim_list = [
-            {"params": net.poses, "lr": opt.learning_rate},
-            {"params": net.coarse_human_net.parameters(), "lr": opt.learning_rate},
-        ]
-    elif opt.train_mode == 'smpl_and_offset':
-        optim_list = [
-            {"params": net.poses, "lr": opt.smpl_lr},
-            {"params": net.coarse_human_net.parameters(), "lr": opt.learning_rate},
-            {"params": net.offset_nets.parameters(), "lr": opt.learning_rate},
-        ]
-    optim = torch.optim.Adam(optim_list)
-
-    trainer = human_nerf_trainer.HumanNeRFTrainer(
-        opt,
-        net,
-        optim,
-        train_loader,
-        val_loader,
-        train_dset,
-        val_dset,
-        interval_comp=opt.geo_threshold
-    )
-
-
-    # with profile(activities=[
-    #     ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True, with_stack=False, profile_memory=True, with_modules=True) as prof:
-        #with record_function("model_inference"):
-    trainer.train()
-    # exit()
-
-    # profiling_data = prof.key_averages().table(sort_by="cpu_time_total", row_limit=20)
-    # print(profiling_data)
-    # with open('profiling_optimized.txt', 'w') as f:
-    #     f.write(profiling_data)
-
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -234,7 +245,7 @@ if __name__ == '__main__':
         parser.add_argument('--ablate_nerft', type=str2bool, default=False, help='vanilla nerf with time')
     else:
         # common args with diferent defaults
-        parser.add_argument('--rays_per_batch', default=4096, type=int, help='how many samples per ray')
+        parser.add_argument('--rays_per_batch', default=1536, type=int, help='how many samples per ray')
         parser.add_argument('--valid_iter', type=int, default=1000, help='interval of validation')
         parser.add_argument('--max_iter', type=int, default=300000, help='total training iterations')
         parser.add_argument('--body_rays_ratio', default=0.95, type=float, help='the percentage of rays on body')

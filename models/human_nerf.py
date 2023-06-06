@@ -56,12 +56,6 @@ class HumanNeRF(nn.Module):
                 use_pca=False,
             ).to(device)
 
-            self.zero_pose = torch.zeros_like(self.poses[0])
-            self.zero_pose = torch.nn.parameter.Parameter(self.zero_pose.reshape(1, -1).to(device), requires_grad=False)
-
-            self.poses_orig = poses.copy()
-            self.betas_orig = betas.copy()
-
 
         # if opt.use_cuda:
         #     # self.coarse_bkg_net = self.coarse_bkg_net.cuda()
