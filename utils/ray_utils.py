@@ -162,6 +162,8 @@ def ray_to_samples(ray_batch,
     '''
     reference: https://github.com/yenchenlin/nerf-pytorch
     '''
+    device = ray_batch['origin'].device
+
     rays_per_batch = ray_batch['origin'].shape[0]
     rays_o, rays_d = ray_batch['origin'], ray_batch['direction']  # [rays_per_batch, 3] each
     near, far = ray_batch['near'], ray_batch['far']  # [-1,1]

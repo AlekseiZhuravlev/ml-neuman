@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-def _color_range_regularization(coarse_human_net, pts, dirs, tgts, penalize_color_range):
+def color_range_regularization(coarse_human_net, pts, dirs, tgts, penalize_color_range):
     device = pts.device
 
     # create dummy directions with random values

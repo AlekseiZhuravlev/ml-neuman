@@ -20,6 +20,8 @@ from models import vanilla, human_nerf
 from trainers import vanilla_nerf_trainer, human_nerf_trainer
 from torch.profiler import profile, record_function, ProfilerActivity
 
+from lightning_code import model as lightning_model
+import lightning as L
 
 def train_human(opt):
 
@@ -48,15 +50,16 @@ def train_human(opt):
     transes = np.stack([item['trans'] for item in train_scene.smpls])
 
     # create main network
-    net = human_nerf.HumanNeRF(opt, poses.copy(), betas.copy(), transes.copy(), scale=train_scene.scale)
+    # net = human_nerf.HumanNeRF(opt, poses.copy(), betas.copy(), transes.copy(), scale=train_scene.scale)
 
     # make the network parallel
     # net = nn.DataParallel(net)
-    net = torch.compile(net)
+    # net = torch.compile(net)
     # print(net.poses)
     # print(list(net.parameters()))
 
-    device = next(net.parameters()).device
+    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+    #next(net.parameters()).device
 
     train_scene.read_data_to_ram(data_list=['image', 'depth'])
 
@@ -87,39 +90,43 @@ def train_human(opt):
         worker_init_fn=utils.worker_init_fn
     )
 
+    model = lightning_model.HumanNeRF(opt, poses.copy(), betas.copy(), transes.copy(), scale=train_scene.scale)
+    trainer = L.Trainer()
+    trainer.fit(model, train_loader)#, val_loader)
+
     # TODO do we need to optimize trans?
-    assert opt.bkg_lr == 0
-    if opt.train_mode == 'smpl_only':
-        assert opt.offset_scale == 0
-        optim_list = [
-            {"params": net.poses, "lr": opt.learning_rate},
-            {"params": net.coarse_human_net.parameters(), "lr": opt.learning_rate},
-        ]
-    elif opt.train_mode == 'smpl_and_offset':
-        optim_list = [
-            {"params": net.poses, "lr": opt.smpl_lr},
-            {"params": net.coarse_human_net.parameters(), "lr": opt.learning_rate},
-            {"params": net.offset_nets.parameters(), "lr": opt.learning_rate},
-        ]
-    optim = torch.optim.Adam(optim_list)
+    # assert opt.bkg_lr == 0
+    # if opt.train_mode == 'smpl_only':
+    #     assert opt.offset_scale == 0
+    #     optim_list = [
+    #         {"params": net.poses, "lr": opt.learning_rate},
+    #         {"params": net.coarse_human_net.parameters(), "lr": opt.learning_rate},
+    #     ]
+    # elif opt.train_mode == 'smpl_and_offset':
+    #     optim_list = [
+    #         {"params": net.poses, "lr": opt.smpl_lr},
+    #         {"params": net.coarse_human_net.parameters(), "lr": opt.learning_rate},
+    #         {"params": net.offset_nets.parameters(), "lr": opt.learning_rate},
+    #     ]
+    # optim = torch.optim.Adam(optim_list)
 
-    trainer = human_nerf_trainer.HumanNeRFTrainer(
-        opt,
-        net,
-        optim,
-        train_loader,
-        val_loader,
-        train_dset,
-        val_dset,
-        interval_comp=opt.geo_threshold
-    )
+    # trainer = human_nerf_trainer.HumanNeRFTrainer(
+    #     opt,
+    #     net,
+    #     optim,
+    #     train_loader,
+    #     val_loader,
+    #     train_dset,
+    #     val_dset,
+    #     interval_comp=opt.geo_threshold
+    # )
 
-    torch.backends.cudnn.benchmark = True
-    torch.jit.enable_onednn_fusion(True)
+    # torch.backends.cudnn.benchmark = True
+    # torch.jit.enable_onednn_fusion(True)
 
     # trainer.ddp_setup()
 
-    trainer.train()
+    # trainer.train()
 
 
 if __name__ == '__main__':
