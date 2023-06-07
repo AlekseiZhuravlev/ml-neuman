@@ -33,7 +33,7 @@ from PIL import Image
 
 from datasets import ray_generation_from_images
 from torch.profiler import profile, record_function, ProfilerActivity
-
+from line_profiler import LineProfiler
 
 
 LOSS_NAMES = [
@@ -259,7 +259,12 @@ class HumanNeRFTrainer:
                     self.validate()
 
             # train for a batch, get total loss
-            loss = self.train_batch(data_pack)
+
+            lp = LineProfiler()
+            lp_wrapper = lp(self.train_batch)
+            loss = lp_wrapper(data_pack)
+            lp.print_stats()
+            # loss = self.train_batch(data_pack)
 
             # update progress bar
             tbar.set_description(f'Train epoch={self.epoch}, loss={loss:.4f}')
@@ -270,6 +275,7 @@ class HumanNeRFTrainer:
             if self.iteration >= self.max_iter:
                 break
             self.iteration += 1
+
 
 
     def train_batch(self, batch):
@@ -314,6 +320,10 @@ class HumanNeRFTrainer:
         #     ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True, with_stack=False, profile_memory=True,
         #         with_modules=True) as prof:
 
+        # lp = LineProfiler()
+        # lp_wrapper = lp(self.loss_func)
+        # loss_dict, fine_rgb_map = lp_wrapper(batch, return_rgb=True)
+        # lp.print_stats()
         loss_dict, fine_rgb_map = self.loss_func(batch, return_rgb=True)
 
         # return 1
@@ -384,6 +394,9 @@ class HumanNeRFTrainer:
                     print(e)
                     pass
 
+            #######################################################################
+            # push losses to tensorboard
+            #######################################################################
             losses_no_grad = {k: float(loss_dict[k]) for k in loss_dict.keys()}
 
             # push training data to tensorboard
@@ -413,7 +426,7 @@ class HumanNeRFTrainer:
 
             assert self.opt.offset_lim >= self.opt.offset_scale >= 0
             new_offset_scale = ((self.opt.offset_lim - self.opt.offset_scale) * max(0, (self.iteration - self.opt.offset_delay) / 60000)) + self.opt.offset_scale
-            for _offset_net in self.net.module.offset_nets:
+            for _offset_net in self.net.offset_nets:
                 if self.iteration >= self.opt.offset_delay:
                     _offset_net.nerf.scale = min(new_offset_scale, self.opt.offset_lim)
                 else:
@@ -427,7 +440,7 @@ class HumanNeRFTrainer:
         Evaluates human nerf on barch, calculates losses
         """
 
-        device = next(self.net.module.parameters()).device
+        device = next(self.net.parameters()).device
 
         # initialize loss dictionary
         loss_dict = {l: torch.tensor(0.0, requires_grad=True, device=device, dtype=torch.float32) for l in LOSS_NAMES}
@@ -514,8 +527,8 @@ class HumanNeRFTrainer:
         # restart if the network is dead
         if human_out[..., 3].max() <= 0.0:
             print('bad weights, reinitializing')
-            self.net.module.offset_nets.apply(weight_reset)
-            self.net.module.coarse_human_net.apply(weight_reset)
+            self.net.offset_nets.apply(weight_reset)
+            self.net.coarse_human_net.apply(weight_reset)
             loss_dict = {l: torch.tensor(0.0, requires_grad=True, device=device, dtype=torch.float32) for l in LOSS_NAMES}
             # loss_dict = create_loss_dict(device)
         if return_rgb:
@@ -555,10 +568,10 @@ class HumanNeRFTrainer:
 
         # predict offset, cur_time and offset are on cuda
         cur_time = torch.ones_like(human_pts[..., 0:1]) * batch['cur_view_f']
-        offset = random.choice(self.net.module.offset_nets)(torch.cat([human_pts, cur_time], dim=-1))
+        offset = random.choice(self.net.offset_nets)(torch.cat([human_pts, cur_time], dim=-1))
 
         # warp points from observation space to canonical space
-        mesh, raw_Ts = self.net.module.vertex_forward(int(batch['cap_id']))
+        mesh, raw_Ts = self.net.vertex_forward(int(batch['cap_id']))
 
         human_pts = human_pts.reshape(-1, 3)
 
@@ -575,7 +588,7 @@ class HumanNeRFTrainer:
         can_dirs = can_dirs / torch.norm(can_dirs, dim=2, keepdim=True)
 
         # get output of human nerf
-        human_out = self.net.module.coarse_human_net(can_pts, can_dirs)
+        human_out = self.net.coarse_human_net(can_pts, can_dirs)
 
         return human_pts, human_dirs, human_z_vals, can_pts, can_dirs, human_out
 
@@ -586,7 +599,7 @@ class HumanNeRFTrainer:
         device = pts.device
         dummy_dirs = torch.randn(dirs.shape, dtype=dirs.dtype, device=device)
         dummy_dirs = dummy_dirs / torch.norm(dummy_dirs, dim=-1, keepdim=True)
-        dummy_out = self.net.module.coarse_human_net(pts, dummy_dirs)
+        dummy_out = self.net.coarse_human_net(pts, dummy_dirs)
         color_reg = F.mse_loss(
             torch.sigmoid(dummy_out.reshape(-1, 4))[:, :3],
             torch.sigmoid(tgts.reshape(-1, 4))[:, :3]
@@ -600,7 +613,7 @@ class HumanNeRFTrainer:
         '''
         pts_flip = pts.clone().detach()
         pts_flip[..., 0] *= -1
-        out_flip = self.net.module.coarse_human_net(pts_flip, dirs.clone().detach())
+        out_flip = self.net.coarse_human_net(pts_flip, dirs.clone().detach())
         sym_reg = F.mse_loss(
             torch.tanh(torch.relu(tgts[..., 3])),
             torch.tanh(torch.relu(out_flip[..., 3]))
@@ -641,7 +654,7 @@ class HumanNeRFTrainer:
         # generate random samples inside a box in canonical space
         if self.penalize_dummy > 0:
             dummy_pts = (torch.rand(pts.shape, dtype=pts.dtype, device=device) - 0.5) * 3
-            dummy_out = self.net.module.coarse_human_net(dummy_pts, dirs)
+            dummy_out = self.net.coarse_human_net(dummy_pts, dirs)
 
             # TODO change to torch
             dist_dummy, _, _ = igl.signed_distance(
@@ -682,7 +695,7 @@ class HumanNeRFTrainer:
             device=device,
             perturb=self.opt.perturb
         )
-        can_out = self.net.module.coarse_human_net(can_pts, can_dirs)
+        can_out = self.net.coarse_human_net(can_pts, can_dirs)
         # compensate the interval difference between observation space and canonical space
         can_out[..., -1] *= self.interval_comp
         _, _, can_mask, can_weights, _ = render_utils.raw2outputs(can_out, can_z_vals.clone(), can_dirs[:, 0, :].clone(), white_bkg=True)
@@ -858,7 +871,7 @@ class HumanNeRFTrainer:
                 else:
                     tb_datapack.add_scalar({f'train_loss/{key}': losses[key]})
         tb_datapack.add_scalar({'lr/lr': lr})
-        tb_datapack.add_scalar({'hyper_params/offset_scale': self.net.module.offset_nets[0].nerf.scale})
+        tb_datapack.add_scalar({'hyper_params/offset_scale': self.net.offset_nets[0].nerf.scale})
         tb_datapack.add_scalar({'hyper_params/penalize_mask': self.penalize_mask})
         tb_datapack.add_scalar({'hyper_params/penalize_symmetric_alpha': self.penalize_symmetric_alpha})
         tb_datapack.add_scalar({'hyper_params/penalize_dummy': self.penalize_dummy})

@@ -56,41 +56,6 @@ class HumanNeRF(nn.Module):
                 use_pca=False,
             ).to(device)
 
-
-        # if opt.use_cuda:
-        #     # self.coarse_bkg_net = self.coarse_bkg_net.cuda()
-        #     # self.fine_bkg_net = self.fine_bkg_net.cuda()
-        #     self.offset_nets = self.offset_nets.cuda()
-        #     self.coarse_human_net = self.coarse_human_net.cuda()
-        #     if poses is not None:
-        #         self.poses = torch.nn.Parameter(torch.tensor(poses, device='cuda').float(), requires_grad=True)
-        #         self.betas = torch.nn.Parameter(torch.tensor(betas, device='cuda').float(), requires_grad=True)
-        #         self.trans = torch.nn.Parameter(torch.tensor(trans, device='cuda').float(), requires_grad=True)
-        #
-        #         self.hand_model = MANOCustom(
-        #             model_path='/home/azhuavlev/Desktop/Data/models/mano/MANO_LEFT.pkl',
-        #             is_rhand=False,
-        #             device='cuda',
-        #             use_pca=False,
-        #         ).to(torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
-        #         self.zero_pose = torch.nn.Parameter(
-        #             torch.tensor(self.zero_pose.detach().numpy(), device='cuda').float(),
-        #             requires_grad=False
-        #         )
-
-
-        # try to load pretrained background model
-        try:
-            raise Exception('not implemented')
-            pretrained_bkg = os.path.join(opt.out_dir, opt.load_background, 'checkpoint.pth.tar')
-            bkg_weights = torch.load(pretrained_bkg, map_location='cpu')
-            utils.safe_load_weights(self.coarse_bkg_net, bkg_weights['coarse_model_state_dict'])
-            utils.safe_load_weights(self.fine_bkg_net, bkg_weights['fine_model_state_dict'])
-            print(f'pretrained background model loaded from {pretrained_bkg}')
-        except Exception as e:
-            print(e)
-            print('train from scratch')
-
         # try to load pretrained canonical human model
         try:
             raise Exception('not implemented')
@@ -148,36 +113,10 @@ class HumanNeRF(nn.Module):
         # render the hand in scene pose, get vertices and joints
         output = self.hand_model(global_orient=root_pose, hand_pose=hand_pose, betas=shape, transl=trans)
         scene_pose_verts = output.vertices
-        scene_pose_joints = output.joints
-
-        # # render zero pose, get vertices and joints of the zero pose
-        # output = self.hand_model(
-        #     global_orient=torch.zeros_like(root_pose),
-        #     hand_pose=torch.zeros_like(hand_pose),
-        #     betas=shape,  # torch.zeros_like(shape),
-        #     transl=torch.zeros_like(trans)
-        # )
-        # zero_pose_verts, zero_pose_joints = output.vertices, output.joints
 
         # get transformation matrices from zero pose to scene pose
         _, T_t2pose = self.hand_model.verts_transformations(global_orient=root_pose, hand_pose=hand_pose, betas=shape,
                                                        transl=trans)
         T_t2pose = T_t2pose.unsqueeze(0)
 
-
-        # print('mano_pose', mano_pose.device)
-        # print('root_pose', root_pose.device)
-        # print('hand_pose', hand_pose.device)
-        # print('shape', shape.device)
-        # print('trans', trans.device)
-        #
-        # print('scene_pose_verts', scene_pose_verts.device)
-        # print('scene_pose_joints', scene_pose_joints.device)
-        # print('T_t2pose', T_t2pose.device)
-        # exit()
-
-
-        # print('T_t2pose.shape', T_t2pose.shape, type(T_t2pose))
-        # print('scene_pose_verts.shape', scene_pose_verts.shape, type(scene_pose_verts))
-        # exit()
         return scene_pose_verts, T_t2pose
