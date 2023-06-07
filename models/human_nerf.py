@@ -13,9 +13,9 @@ from models import vanilla
 from models.mano import MANOCustom
 from typing import Optional, Dict, Union
 
-'''
-Extra offset network to compensate the misalignment
-'''
+from losses import color_range_regularization, smpl_symmetry_regularization, smpl_shape_regularization, \
+    sparsity_regularization, rgb_loss, lpips_loss
+import lpips
 
 
 class HumanNeRF(nn.Module):
@@ -34,29 +34,38 @@ class HumanNeRF(nn.Module):
         temp_opt.pos_min_freq = 0
         temp_opt.use_viewdirs = temp_opt.specular_can
         temp_opt.posenc = temp_opt.can_posenc
+        self.opt = temp_opt
 
         self.coarse_human_net, _ = vanilla.build_nerf(temp_opt)
-        self.coarse_human_net = self.coarse_human_net.to(device)
+        self.coarse_human_net = self.coarse_human_net #.to(device)
+
+        #print('LPIPS is on', next(self.parameters()).device)
+        if self.opt.penalize_lpips > 0:
+            self.lpips_loss_fn = lpips.LPIPS(net='alex') #.to(next(self.parameters()).device)
 
         if poses is not None:
             assert betas is not None
             assert scale is not None
-            self.poses = torch.nn.parameter.Parameter(torch.from_numpy(poses).float().to(device),
+            self.poses = torch.nn.parameter.Parameter(torch.from_numpy(poses).float(), #.to(device),
                                                       requires_grad=True)
-            self.betas = torch.nn.parameter.Parameter(torch.from_numpy(betas).float().to(device),
+            self.betas = torch.nn.parameter.Parameter(torch.from_numpy(betas).float(), #.to(device),
                                                       requires_grad=True)
-            self.trans = torch.nn.parameter.Parameter(torch.from_numpy(trans).float().to(device),
+            self.trans = torch.nn.parameter.Parameter(torch.from_numpy(trans).float(), #.to(device),
                                                       requires_grad=True)
             self.scale = scale
 
             self.hand_model = MANOCustom(
                 model_path='/home/azhuavlev/Desktop/Data/models/mano/MANO_LEFT.pkl',
                 is_rhand=False,
-                device=device,
+                #device=device,
                 use_pca=False,
             ).to(device)
 
         # try to load pretrained canonical human model
+        self.load_pretrained_human_model(opt)
+
+
+    def load_pretrained_human_model(self, opt):
         try:
             raise Exception('not implemented')
             pretrained_can = os.path.join(opt.out_dir, opt.load_can, 'checkpoint.pth.tar')
@@ -70,6 +79,140 @@ class HumanNeRF(nn.Module):
         except Exception as e:
             print(e)
             print('train from scratch')
+
+
+    def forward(self, batch, return_rgb=False):
+        """
+        Evaluates human nerf on batch, calculates losses
+        """
+
+        device = next(self.parameters()).device
+
+        # initialize loss dictionary
+        loss_dict = {l: torch.tensor(0.0, requires_grad=True, device=device, dtype=torch.float32) for l in LOSS_NAMES}
+
+        # get results of human nerf
+        _, human_dirs, human_z_vals, can_pts, can_dirs, human_out = self._eval_human_samples(batch, device)
+
+        # get rgb map
+        fine_rgb_map = self.render_rgb_map(
+            human_z_vals=human_z_vals,
+            human_dirs=human_dirs,
+            human_out=human_out,
+            white_bkg=self.opt.white_bkg,
+        )
+
+        # Calculate losses
+
+        # canonical space should be symmetric in terms of occupancy
+        # if self.penalize_symmetric_alpha > 0:
+        #     loss_dict['smpl_sym_reg'] = loss_dict['smpl_sym_reg'] + self._smpl_symmetry_regularization(can_pts, can_dirs, human_out)
+
+        # color of the same point should not change too much due to viewing directions
+        if self.opt.penalize_color_range > 0:
+            loss_dict['color_range_reg'] = loss_dict['color_range_reg'] + \
+                                           self._color_range_regularization(can_pts, can_dirs, human_out)
+
+        # the rendered human should be close to the detected human mask
+        # loosely enforced, the penalty linearly decreases during training
+        if self.opt.penalize_mask > 0:
+            _, _, human_mask, _, _ = render_utils.raw2outputs(human_out, human_z_vals, human_dirs[:, 0, :], white_bkg=self.opt.white_bkg)
+            loss_dict['mask_loss'] += F.mse_loss(
+                torch.clamp(human_mask, min=0.0, max=1.0),
+                (1.0-batch['is_bkg'].float())
+            ) * self.opt.penalize_mask
+
+        # alpha inside smpl mesh should be 1, alpha outside smpl mesh should be 0
+        # if self.penalize_smpl_alpha > 0:
+        #     loss_dict['smpl_shape_reg'] = loss_dict['smpl_shape_reg'] + self._smpl_shape_regularization(batch, can_pts, can_dirs, human_out)
+
+        # sharp edge loss + hard surface loss
+        # USES NUMPY
+        # if self.penalize_sharp_edge > 0 or self.penalize_hard_surface > 0:
+        #     loss_dict['sparsity_reg'] = loss_dict['sparsity_reg'] + self._sparsity_regularization(device)
+
+        # RGB loss
+        loss_dict['fine_rgb_loss'] += rgb_loss.rgb_loss(
+            fine_rgb_map=fine_rgb_map,
+            batch_color=batch['color'],
+            batch_is_hit=batch['is_hit'],
+        )
+
+        # LPIPS loss
+        if self.penalize_lpips > 0 and batch['patch_counter'] == 1:
+            loss_dict['lpips_loss'] += lpips_loss.lpips_loss(
+                lpips_loss_fn=self.lpips_loss_fn,
+                fine_rgb_map=fine_rgb_map,
+                batch_color=batch['color'],
+                penalize_lpips=self.opt.penalize_lpips
+            )
+
+        # restart if the network is dead
+        if human_out[..., 3].max() <= 0.0:
+            self.restart_networks()
+            loss_dict = {l: torch.tensor(0.0, requires_grad=True, device=device, dtype=torch.float32) for l in
+                         LOSS_NAMES}
+
+        if return_rgb:
+            return loss_dict, fine_rgb_map
+        else:
+            return loss_dict
+
+    def _eval_human_samples(self, batch, device):
+        """
+        Get output of human Nerf + offset nets, by taking a batch of rays,
+         converting them to samples, warping them to canonical space,
+         and feeding them to Human Nerf
+
+        all parameters are on cuda, including input batch
+        """
+
+        human_batch = {
+            'origin': batch['origin'],
+            'direction': batch['direction'],
+            'near': batch['human_near'],
+            'far': batch['human_far'],
+        }
+
+        # get samples for human rays
+        human_samples = ray_utils.ray_to_samples(
+            human_batch,
+            self.opt.samples_per_ray,
+            device=device,
+            perturb=self.opt.perturb
+        )
+
+        # human pts, human dirs, human z vals are on cuda
+        human_pts = human_samples[0]
+        human_dirs = human_samples[1]
+        human_z_vals = human_samples[2]
+        human_b, human_n, _ = human_pts.shape
+
+        # predict offset, cur_time and offset are on cuda
+        cur_time = torch.ones_like(human_pts[..., 0:1]) * batch['cur_view_f']
+        offset = random.choice(self.offset_nets)(torch.cat([human_pts, cur_time], dim=-1))
+
+        # warp points from observation space to canonical space
+        mesh, raw_Ts = self.vertex_forward(int(batch['cap_id']))
+
+        human_pts = human_pts.reshape(-1, 3)
+
+        # new method
+        Ts = ray_utils.warp_samples_gpu(pts=human_pts, verts=mesh[0], T=raw_Ts[0])
+
+        # get canonical points and apply offset
+        can_pts = (Ts @ ray_utils.to_homogeneous(human_pts)[..., None])[:, :3, 0].reshape(human_b, human_n, 3)
+        can_pts += offset
+
+        # get canonical directions
+        can_dirs = can_pts[:, 1:] - can_pts[:, :-1]
+        can_dirs = torch.cat([can_dirs, can_dirs[:, -1:]], dim=1)
+        can_dirs = can_dirs / torch.norm(can_dirs, dim=2, keepdim=True)
+
+        # get output of human nerf
+        human_out = self.coarse_human_net(can_pts, can_dirs)
+
+        return human_pts, human_dirs, human_z_vals, can_pts, can_dirs, human_out
 
 
     def vertex_forward(self,
@@ -120,3 +263,33 @@ class HumanNeRF(nn.Module):
         T_t2pose = T_t2pose.unsqueeze(0)
 
         return scene_pose_verts, T_t2pose
+
+
+    def render_rgb_map(self, human_z_vals, human_dirs, human_out, white_bkg):
+        # sort the z values in ascending order
+        fine_total_zvals, fine_order = torch.sort(human_z_vals, -1)
+        fine_total_out = human_out
+
+        # rearrange the rays
+        _b, _n, _c = fine_total_out.shape
+        fine_total_out = fine_total_out[
+            torch.arange(_b).view(_b, 1, 1).repeat(1, _n, _c),
+            fine_order.view(_b, _n, 1).repeat(1, 1, _c),
+            torch.arange(_c).view(1, 1, _c).repeat(_b, _n, 1),
+        ]
+
+        # render the rgb map
+        fine_rgb_map, _, _, _, _ = render_utils.raw2outputs(
+            fine_total_out,
+            fine_total_zvals,
+            # was: fine_bkg_dirs[:, 0, :],
+            human_dirs[:, 0, :],
+            white_bkg=white_bkg
+        )
+        return fine_rgb_map
+
+    def restart_networks(self):
+        print('bad weights, reinitializing')
+        self.offset_nets.apply(weight_reset)
+        self.coarse_human_net.apply(weight_reset)
+

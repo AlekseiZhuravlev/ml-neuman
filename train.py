@@ -117,53 +117,9 @@ def train_human(opt):
     torch.backends.cudnn.benchmark = True
     torch.jit.enable_onednn_fusion(True)
 
-    # with profile(activities=[
-    #     ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True, with_stack=True, profile_memory=True, with_modules=True) as prof:
-        # with record_function("model_inference"):
+    # trainer.ddp_setup()
 
     trainer.train()
-    # exit()
-
-    # profiling_data = prof.key_averages().table(sort_by="cpu_time_total", row_limit=20)
-    # print(profiling_data)
-    # with open('profiling_optimized.txt', 'w') as f:
-    #     f.write(profiling_data)
-
-    # prof.export_chrome_trace("trace.json")
-
-
-
-    # train_dset = human_images_only.ImagesOnlyDataset(opt, train_scene, 'train', train_split)
-    # val_dset = human_images_only.ImagesOnlyDataset(opt, train_scene, 'val', val_split, near_far_cache=train_dset.near_far_cache)
-
-    # train_dset = train_dset.to('cuda')
-    # print(train_dset[0])
-    # exit()
-
-    # images_only_loader = DataLoader(
-    #     images_only_dset,
-    #     batch_size=1,
-    #     shuffle=True,
-    #     num_workers=3,
-    #     worker_init_fn=utils.worker_init_fn,
-    # )
-
-
-    # get an element from the dataloader
-    # for i, data in enumerate(images_only_loader):
-    #     ray_generation_from_images.RaysFromImagesGenerator(opt).generate_rays_from_images(data)
-    #
-    #     # TODO visualize rays
-    #     exit()
-    #
-    #
-    #
-    # exit()
-
-    # print('train_dset size: ', len(train_dset))
-    # print(train_dset[2])
-    # print('scene.num_views: ', train_scene.num_views)
-    # exit()
 
 
 if __name__ == '__main__':

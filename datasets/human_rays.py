@@ -64,6 +64,7 @@ class HumanRayDataset(data.Dataset):
         print(f'{dset_type} dataset has {len(self.inclusions)} samples: {self.inclusions}')
         self.white_bkg = opt.white_bkg
         self.batch_size = opt.rays_per_batch
+
         if near_far_cache is None:
             cache_helper.export_near_far_cache(opt, scene, opt.geo_threshold, opt.chunk, self.device)
             self.near_far_cache = cache_helper.load_near_far_cache(opt, scene, opt.geo_threshold)
@@ -79,12 +80,13 @@ class HumanRayDataset(data.Dataset):
         '''
         We use a large number to represent the length of the training set, and a small number for the validation set.
         '''
-        if self.dset_type == 'train':
-            return TRAIN_SET_LENGTH
-        elif self.dset_type == 'val':
-            return VALIDATION_SET_LENGTH
-        else:
-            raise ValueError
+        # if self.dset_type == 'train':
+        #     return TRAIN_SET_LENGTH
+        # elif self.dset_type == 'val':
+        #     return VALIDATION_SET_LENGTH
+        # else:
+        #     raise ValueError
+        return len(self.inclusions)
 
     def get_num_rays_dict(self, num):
         """
@@ -101,8 +103,6 @@ class HumanRayDataset(data.Dataset):
             'num_bkg_rays': num_bkg_rays
             }
         """
-
-
 
         num_body_rays = int(round(num * self.opt.body_rays_ratio))
         num_border_rays = int(round(num * self.opt.border_rays_ratio)) if self.opt.dilation > 0 else 0
@@ -124,8 +124,6 @@ class HumanRayDataset(data.Dataset):
             'num_bkg_rays': num_bkg_rays,
         }
 
-    # def get_num_rays_dict_patch(self, num):
-
 
     def __getitem__(self, index):
         '''
@@ -137,7 +135,8 @@ class HumanRayDataset(data.Dataset):
         #     cap_id = self.cap_id
 
         # TODO rewrite to get the capture specified by cap_id, instead of randomly sampling one
-        cap_id = self.scene.fname_to_index_dict[random.choice(self.inclusions)]
+        # cap_id = self.scene.fname_to_index_dict[random.choice(self.inclusions)]
+        cap_id = self.scene.fname_to_index_dict[self.inclusions[index]]
 
         assert 0 <= cap_id < len(self.scene.captures)
         caps = self.scene.get_captures_by_view_id(cap_id)
@@ -309,9 +308,4 @@ class HumanRayDataset(data.Dataset):
             'patch_counter': torch.tensor(patch_counter, dtype=torch.int32),
         }
 
-        # print(
-        #     'cur_view_f', type((cap.frame_id['frame_id'] / cap.frame_id['total_frames'])),
-        #     'cur_view', type(cap.frame_id['frame_id']),
-        #     'cap_id', type(cap_id),
-        # )
         return out
