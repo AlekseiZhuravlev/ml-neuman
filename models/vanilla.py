@@ -5,7 +5,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
+
+import lightning as L
 
 
 def weight_reset(m):
@@ -14,7 +15,7 @@ def weight_reset(m):
 
 
 # Positional encoding (section 5.1)
-class Embedder(nn.Module):
+class Embedder(L.LightningModule):
     def __init__(
         self,
         input_dims,
@@ -34,6 +35,9 @@ class Embedder(nn.Module):
         self.include_input = include_input
         self.out_dim = 0
         self.mapping = mapping
+
+        self.register_buffer("bvals", None)
+
         if mapping == 'rotate':
             self.create_rotated_embedding()
         elif mapping == 'posenc':
@@ -41,19 +45,23 @@ class Embedder(nn.Module):
         else:
             assert ValueError(mapping)
 
+
     def create_rotated_embedding(self):
+        # print('Creating rotated embedding', self.device)
+
         out_dim = self.N_freqs * 2 * 3
-        bvals = 2.**np.linspace(self.min_freq, self.max_freq, num=self.N_freqs)
-        bvals = np.reshape(np.eye(3)*bvals[:, None, None], [len(bvals)*3, 3])
-        rot = np.array([[(2**.5)/2, -(2**.5)/2, 0], [(2**.5)/2, (2**.5)/2, 0], [0, 0, 1]])
+        bvals = 2.**torch.linspace(self.min_freq, self.max_freq, steps=self.N_freqs)
+        bvals = torch.reshape(torch.eye(3)*bvals[:, None, None], [len(bvals)*3, 3])
+        rot = torch.tensor([[(2**.5)/2, -(2**.5)/2, 0], [(2**.5)/2, (2**.5)/2, 0], [0, 0, 1]], device=self.device)
         bvals = bvals @ rot.T
-        rot = np.array([[1, 0, 0], [0, (2**.5)/2, -(2**.5)/2], [0, (2**.5)/2, (2**.5)/2]])
+        rot = torch.tensor([[1, 0, 0], [0, (2**.5)/2, -(2**.5)/2], [0, (2**.5)/2, (2**.5)/2]], device=self.device)
         bvals = bvals @ rot.T
-        try:
-            self.bvals = torch.from_numpy(bvals).float().cuda()
-        except:
-            raise Exception('CUDA not available')
-            self.bvals = torch.from_numpy(bvals).float()
+        # try:
+        #     self.bvals = torch.from_numpy(bvals).float() #.cuda()
+        # except:
+        #     raise Exception('CUDA not available')
+        #     self.bvals = torch.from_numpy(bvals).float()
+        self.bvals = bvals
         if self.include_input:
             out_dim += 3
         self.out_dim = out_dim
@@ -93,7 +101,7 @@ class Embedder(nn.Module):
             return torch.cat([fn(inputs) for fn in self.embed_fns], -1)
 
 
-class NeRF(nn.Module):
+class NeRF(L.LightningModule):
     def __init__(self, depth=8, width=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4], use_viewdirs=False, scale=1.0, scale_type='no'):
         """ 
         """
@@ -153,7 +161,7 @@ class NeRF(nn.Module):
             return torch.tanh(outputs) * self.scale
 
 
-class Joiner(nn.Module):
+class Joiner(L.LightningModule):
     def __init__(self, pos_pe, dir_pe, nerf):
         super().__init__()
         self.pos_pe = pos_pe
@@ -167,7 +175,7 @@ class Joiner(nn.Module):
         return self.nerf(input_pts, input_views)
 
 
-class OffsetNet(nn.Module):
+class OffsetNet(L.LightningModule):
     def __init__(self, pos_pe, nerf):
         super().__init__()
         self.pos_pe = pos_pe
@@ -201,8 +209,8 @@ def build_offset_net(opt):
 
     offset_net = OffsetNet(st_pe, offset_net)
 
-    if opt.use_cuda:
-        offset_net = offset_net.cuda()
+    # if opt.use_cuda:
+    #     offset_net = offset_net.cuda()
     return offset_net
 
 
@@ -245,7 +253,7 @@ def build_nerf(opt):
     coarse_net = Joiner(pos_pe, dir_pe, coarse_net)
     fine_net = Joiner(pos_pe, dir_pe, fine_net)
 
-    if opt.use_cuda:
-        coarse_net = coarse_net.cuda()
-        fine_net = fine_net.cuda()
+    # if opt.use_cuda:
+    #     coarse_net = coarse_net.cuda()
+    #     fine_net = fine_net.cuda()
     return coarse_net, fine_net

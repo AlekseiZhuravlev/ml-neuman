@@ -75,23 +75,29 @@ def train_human(opt):
     train_dset = human_rays.HumanRayDataset(opt, train_scene, 'train', train_split)
     val_dset = human_rays.HumanRayDataset(opt, train_scene, 'val', val_split, near_far_cache=train_dset.near_far_cache)
 
+    print(f'os.cpu_count {os.cpu_count()}, len(os.sched_getaffinity(0)) {len(os.sched_getaffinity(0))}')
+    worker_count = min(os.cpu_count(), len(os.sched_getaffinity(0)))
     train_loader = DataLoader(
         train_dset,
         batch_size=1,
-        shuffle=True,
-        num_workers=3,
-        worker_init_fn=utils.worker_init_fn,
+        #shuffle=True,
+        num_workers=worker_count,
+        pin_memory=True
+        # worker_init_fn=utils.worker_init_fn,
     )
     val_loader = DataLoader(
         val_dset,
         batch_size=1,
-        shuffle=True,
-        num_workers=0,
-        worker_init_fn=utils.worker_init_fn
+        num_workers=worker_count,
+        pin_memory=True
     )
 
     model = lightning_model.HumanNeRF(opt, poses.copy(), betas.copy(), transes.copy(), scale=train_scene.scale)
-    trainer = L.Trainer()
+
+    trainer = L.Trainer(
+        max_epochs=10,
+        benchmark=True,
+    )
     trainer.fit(model, train_loader)#, val_loader)
 
     # TODO do we need to optimize trans?

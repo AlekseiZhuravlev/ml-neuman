@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from utils import utils, ray_utils, render_utils
 from models import vanilla
 from models.mano import MANOCustom
+from models.vanilla import weight_reset
 from typing import Optional, Dict, Union
 
 from utils.constant import HARD_SURFACE_OFFSET, PATCH_SIZE, PATCH_SIZE_SQUARED, CANONICAL_ZOOM_FACTOR, \
