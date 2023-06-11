@@ -16,7 +16,7 @@ import numpy as np
 
 class MANOCustom(smplx.MANO):
     def __init__(self, **kwargs):
-        super(MANOCustom, self).__init__(flat_hand_mean=True, **kwargs)
+        super(MANOCustom, self).__init__(flat_hand_mean=False, **kwargs)
         # self.device = device
 
     # this is wrong

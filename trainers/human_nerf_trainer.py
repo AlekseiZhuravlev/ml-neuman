@@ -289,7 +289,7 @@ class HumanNeRFTrainer:
                     self.model.offset_nets[i].nerf.scale = 0
 
     ########################################################################################################################
-    # validation and logging
+    # validation
     ########################################################################################################################
 
     def validate_batch(self, raw_batch):
@@ -414,14 +414,9 @@ class HumanNeRFTrainer:
         if training:
             self.model.train()
 
-    def save_model(self):
-        save_dict = {
-            'epoch': self.epoch,
-            'iteration': self.iteration,
-            'optim_state_dict': self.optim.state_dict(),
-            'hybrid_model_state_dict': self.model.state_dict(),
-        }
-        torch.save(save_dict, os.path.join(self.out, 'checkpoint.pth.tar'))
+    #################################################################
+    # Tensorboard
+    #################################################################
 
     def push_validation_data(self, validation_data):
         render = vutils.make_grid(validation_data['render'], nrow=2, normalize=True, scale_each=True)
@@ -455,6 +450,31 @@ class HumanNeRFTrainer:
         tb_datapack.add_scalar({'hyper_params/penalize_smpl_alpha': self.model.opt.penalize_smpl_alpha})
         self.tb_pusher.push_to_tensorboard(tb_datapack)
 
+    def push_opt_to_tb(self):
+        opt_str = options.opt_to_string(self.opt)
+        tb_datapack = tensorboard_helper.TensorboardDatapack()
+        tb_datapack.set_training(False)
+        tb_datapack.set_iteration(self.iteration)
+        tb_datapack.add_text({'options': opt_str})
+        self.tb_pusher.push_to_tensorboard(tb_datapack)
+
+    #################################################################
+    # Saving checkpoints
+    #################################################################
+
+    def save_model(self):
+        save_dict = {
+            'epoch': self.epoch,
+            'iteration': self.iteration,
+            'optim_state_dict': self.optim.state_dict(),
+            'hybrid_model_state_dict': self.model.state_dict(),
+        }
+        torch.save(save_dict, os.path.join(self.out, 'checkpoint.pth.tar'))
+
+    #################################################################
+    # Loading checkpoints
+    #################################################################
+
     def resume(self):
         '''resume training:
         resume from the recorded epoch, iteration, and saved weights.
@@ -487,11 +507,3 @@ class HumanNeRFTrainer:
         utils.safe_load_weights(self.model, saved['hybrid_model_state_dict'])
         content_list += [f'Loaded pretrained weights from {self.opt.load_weights_path}']
         utils.print_notification(content_list)
-
-    def push_opt_to_tb(self):
-        opt_str = options.opt_to_string(self.opt)
-        tb_datapack = tensorboard_helper.TensorboardDatapack()
-        tb_datapack.set_training(False)
-        tb_datapack.set_iteration(self.iteration)
-        tb_datapack.add_text({'options': opt_str})
-        self.tb_pusher.push_to_tensorboard(tb_datapack)

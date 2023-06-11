@@ -22,6 +22,9 @@ from torch.profiler import profile, record_function, ProfilerActivity
 
 from lightning_code import model as lightning_model
 import lightning as L
+from lightning.pytorch.loggers import TensorBoardLogger
+from lightning.pytorch.callbacks import ModelCheckpoint, DeviceStatsMonitor
+from lightning.pytorch.profilers import AdvancedProfiler
 
 def train_human(opt):
 
@@ -52,14 +55,7 @@ def train_human(opt):
     # create main network
     # net = human_nerf.HumanNeRF(opt, poses.copy(), betas.copy(), transes.copy(), scale=train_scene.scale)
 
-    # make the network parallel
-    # net = nn.DataParallel(net)
-    # net = torch.compile(net)
-    # print(net.poses)
-    # print(list(net.parameters()))
-
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-    #next(net.parameters()).device
 
     train_scene.read_data_to_ram(data_list=['image', 'depth'])
 
@@ -72,33 +68,90 @@ def train_human(opt):
     utils.move_smpls_to_torch(train_scene, device)
 
     # near_far cache will be created
-    train_dset = human_rays.HumanRayDataset(opt, train_scene, 'train', train_split)
-    val_dset = human_rays.HumanRayDataset(opt, train_scene, 'val', val_split, near_far_cache=train_dset.near_far_cache)
+    train_dset = human_rays.HumanRayDataset(
+        opt,
+        train_scene,
+        'train',
+        train_split,
+        n_repeats=8
+    )
+    val_dset = human_rays.HumanRayDataset(
+        opt,
+        train_scene,
+        'val',
+        val_split,
+        near_far_cache=train_dset.near_far_cache,
+        n_repeats=1
+    )
 
     print(f'os.cpu_count {os.cpu_count()}, len(os.sched_getaffinity(0)) {len(os.sched_getaffinity(0))}')
-    worker_count = min(os.cpu_count(), len(os.sched_getaffinity(0)))
+
+    worker_count = min(os.cpu_count(), len(os.sched_getaffinity(0))) // torch.cuda.device_count()
+    print(f'worker_count {worker_count}')
+    # worker_count = 0
+
     train_loader = DataLoader(
         train_dset,
         batch_size=1,
-        #shuffle=True,
+        shuffle=True,
         num_workers=worker_count,
-        pin_memory=True
-        # worker_init_fn=utils.worker_init_fn,
+        pin_memory=True,
     )
     val_loader = DataLoader(
         val_dset,
         batch_size=1,
         num_workers=worker_count,
-        pin_memory=True
+        pin_memory=True,
     )
 
-    model = lightning_model.HumanNeRF(opt, poses.copy(), betas.copy(), transes.copy(), scale=train_scene.scale)
 
-    trainer = L.Trainer(
-        max_epochs=10,
-        benchmark=True,
-    )
-    trainer.fit(model, train_loader)#, val_loader)
+    logger = TensorBoardLogger(opt.out_dir + '/' + opt.name)
+    checkpoint_callback = ModelCheckpoint(save_top_k=5, monitor="epoch", mode='max', every_n_epochs=1)
+    # profiler = AdvalcedProfiler(
+    #     dirpath="/home/azhuavlev/Desktop/Results/neuman-mano/interhand/",
+    #     filename="perf_logs.txt"
+    # )
+    # stats_monitor = DeviceStatsMonitor(cpu_stats=False)
+
+    restart_exception = True
+    while restart_exception:
+        print('Restarting training')
+        restart_exception = False
+        try:
+            model = lightning_model.HumanNeRF(opt, poses.copy(), betas.copy(), transes.copy(), scale=train_scene.scale)
+
+            trainer = L.Trainer(
+                max_epochs=1000,
+                benchmark=True,
+                logger=logger,
+                default_root_dir=opt.out_dir + '/' + opt.name,
+                check_val_every_n_epoch=100,
+                log_every_n_steps=100,
+                # profiler=profiler,
+                # profiler='simple',
+                callbacks=[
+                    checkpoint_callback,
+                    # stats_monitor,
+                ],
+            )
+            trainer.fit(
+                model,
+                train_loader,
+                val_loader
+            )
+        except NotImplementedError as e:
+            print(
+                """
+                !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                Exception
+                !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                """
+            )
+            del model, trainer
+
+            print(e)
+            restart_exception = True
+
 
     # TODO do we need to optimize trans?
     # assert opt.bkg_lr == 0
@@ -144,7 +197,7 @@ if __name__ == '__main__':
     opt, _ = parser.parse_known_args()
 
     # common args with diferent defaults
-    parser.add_argument('--rays_per_batch', default=2048, type=int, help='how many rays per batch')
+    parser.add_argument('--rays_per_batch', default=4096, type=int, help='how many rays per batch')
     parser.add_argument('--valid_iter', type=int, default=1000, help='interval of validation')
     parser.add_argument('--max_iter', type=int, default=300000, help='total training iterations')
     parser.add_argument('--body_rays_ratio', default=0.95, type=float, help='the percentage of rays on body')
@@ -171,6 +224,7 @@ if __name__ == '__main__':
     parser.add_argument('--chunk', default=10000, type=int, help='chunk size per caching iteration')
     parser.add_argument('--load_background', type=str, default=None, help='load a pretrained background, for joint training')
     parser.add_argument('--load_can', type=str, default=None, help='load a pretrained canonical volume')
+
     parser.add_argument('--num_offset_nets', default=1, type=int, help='how many offset networks')
     parser.add_argument('--offset_scale', default=0, type=float, help='scale the predicted offset')
     parser.add_argument('--offset_scale_type', default='linear', type=str, help='no/linear/tanh')
@@ -196,7 +250,9 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate', default=5e-4, type=float, help='NeRF learning rate')
     parser.add_argument('--lrate_decay', default=250, type=int, help='NeRF learning rate decay')
     parser.add_argument('--raw_noise_std', default=0, type=float, help='add noise while rendering')
-    parser.add_argument('--out_dir', default='./out', type=str, help='output dir')
+
+    # directories
+    parser.add_argument('--out_dir', default='/home/azhuavlev/Desktop/Results/neuman-mano/', type=str, help='output dir')
     parser.add_argument('--name', default='dummy', type=str, help='name of run')
     parser.add_argument('--resume', type=str2bool, default=False, help='resume training with same model name')
     parser.add_argument('--load_weights', type=str, default=None, help='load a pretrained set of weights, you need to provide the model id')

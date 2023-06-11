@@ -20,10 +20,8 @@ def display_sampled_rays_nerf():
 
 
 if __name__ == '__main__':
-    with profile(activities=[
-        ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
-        with record_function("model_inference"):
-            model(inputs)
-
-    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+    cpt = torch.load('/home/azhuavlev/Desktop/Results/neuman-mano/interhand/lightning_logs/lightning_logs/version_20/checkpoints/epoch=9-step=400.ckpt')
+    # cpt = torch.load('/home/azhuavlev/Desktop/Data/neuman/out/seattle_human/checkpoint.pth.tar')
+    print(cpt.keys())
+    # print(cpt['hybrid_model_state_dict'].keys())
 

@@ -312,10 +312,24 @@ class NeuManReader():
             output = hand_model(
                 global_orient=torch.zeros_like(root_pose),
                 hand_pose=torch.zeros_like(hand_pose),
-                betas= shape,#torch.zeros_like(shape),
+                betas= torch.zeros_like(shape),
                 transl=torch.zeros_like(trans)
             )
             zero_pose_verts, zero_pose_joints = output.vertices, output.joints
+
+            # verts_to_render = zero_pose_verts[0]
+            # cap_id = 10
+            # verts_to_render = scene.verts[cap_id]
+
+            # print(f'Vertices to render: {verts_to_render.shape}')
+            # # plot the vertices as 3d points
+            # fig = plt.figure()
+            # ax = fig.add_subplot(111, projection='3d')
+            # ax.scatter(verts_to_render[:, 0], verts_to_render[:, 1], verts_to_render[:, 2])
+            #
+            # plt.show()
+            #
+            # exit()
 
             # get transformation matrices from zero pose to scene pose
             _, T_t2pose = hand_model.verts_transformations(global_orient=root_pose, hand_pose=hand_pose, betas=shape, transl=trans)

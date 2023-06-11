@@ -182,16 +182,22 @@ def render_smpl_nerf(net, cap, posed_verts, faces, Ts, rays_per_batch=32768, sam
         return ray_batch
 
     with torch.set_grad_enabled(False):
+
+        # get ray origins and directions
         coords = np.argwhere(np.ones(cap.shape))[:, ::-1]
         origins, dirs = ray_utils.shot_rays(cap, coords)
         origins, dirs = torch.from_numpy(origins).to(device), torch.from_numpy(dirs).to(device)
+
+
         posed_verts = torch.from_numpy(posed_verts).to(device)
+
+        # prepare lists for storing rgb, depth, and accuarcy maps
         total_rays = origins.shape[0]
         total_rgb_map = []
         total_depth_map = []
         total_acc_map = []
         for i in range(0, total_rays, rays_per_batch):
-            print(f'{i} / {total_rays}')
+            # print(f'{i} / {total_rays}')
             rgb_map = torch.zeros_like(origins[i:i + rays_per_batch]).to(device)
             depth_map = torch.zeros_like(origins[i:i + rays_per_batch, 0]).to(device)
             acc_map = torch.zeros_like(origins[i:i + rays_per_batch, 0]).to(device)
@@ -215,6 +221,10 @@ def render_smpl_nerf(net, cap, posed_verts, faces, Ts, rays_per_batch=32768, sam
                     can_pts = _pts
                     can_dirs = _dirs
                 else:
+                    # print('_pts.shape', _pts.shape)
+                    # print('posed_verts.shape', posed_verts.shape)
+                    # print('faces.shape', faces.shape)
+                    # print('Ts.shape', Ts.shape)
                     can_pts, can_dirs, _ = ray_utils.warp_samples_to_canonical(
                         _pts.cpu().numpy(),
                         posed_verts.cpu().numpy(),
@@ -222,7 +232,8 @@ def render_smpl_nerf(net, cap, posed_verts, faces, Ts, rays_per_batch=32768, sam
                         Ts
                     )
                     can_pts = torch.from_numpy(can_pts)
-                    can_dirs = torch.from_numpy(can_dirs) 
+                    can_dirs = torch.from_numpy(can_dirs)
+                    # can_pts, can_dirs = ray_utils.warp_samples_to_canonical(
                 can_pts = can_pts.to(device).float()
                 can_dirs = can_dirs.to(device).float()
                 out = net.coarse_human_net(can_pts, can_dirs)

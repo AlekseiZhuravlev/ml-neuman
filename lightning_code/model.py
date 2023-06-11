@@ -1,31 +1,25 @@
-#
-# Copyright (C) 2022 Apple Inc. All rights reserved.
-#
-
-import os
 import copy
-
+import lightning as L
+import lpips
+import matplotlib.pyplot as plt
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-from utils import utils, ray_utils, render_utils
-from models import vanilla
-from models.mano import MANOCustom
-from models.vanilla import weight_reset
 from typing import Optional, Dict, Union
-
-from utils.constant import HARD_SURFACE_OFFSET, PATCH_SIZE, PATCH_SIZE_SQUARED, CANONICAL_ZOOM_FACTOR, \
-    CANONICAL_CAMERA_DIST
-
 
 from losses import color_range_regularization, smpl_symmetry_regularization, smpl_shape_regularization, \
     sparsity_regularization, rgb_loss, lpips_loss
-import lpips
+from models import vanilla
+from models.mano import MANOCustom
+from models.vanilla import weight_reset
+from utils import utils, ray_utils, render_utils
+from utils.constant import HARD_SURFACE_OFFSET, PATCH_SIZE, PATCH_SIZE_SQUARED, CANONICAL_ZOOM_FACTOR, \
+    CANONICAL_CAMERA_DIST
+
+import numpy as np
 
 # import random
-
-import lightning as L
 
 LOSS_NAMES = [
     'fine_rgb_loss',
@@ -37,12 +31,17 @@ LOSS_NAMES = [
     'sparsity_reg'
 ]
 
+
 class HumanNeRF(L.LightningModule):
     def __init__(self, opt, poses=None, betas=None, trans=None, scale=None):
         super().__init__()
 
-        # self.coarse_bkg_net, self.fine_bkg_net = vanilla.build_nerf(opt)
-        self.offset_nets = nn.ModuleList([vanilla.build_offset_net(opt) for i in range(opt.num_offset_nets)])
+        # build offset nets
+
+        if opt.num_offset_nets > 0:
+            self.offset_nets = nn.ModuleList([vanilla.build_offset_net(opt) for i in range(opt.num_offset_nets)])
+        else:
+            self.offset_nets = None
 
         # canonical space always use 0 as minimum frequency
         temp_opt = copy.deepcopy(opt)
@@ -51,9 +50,11 @@ class HumanNeRF(L.LightningModule):
         temp_opt.posenc = temp_opt.can_posenc
         self.opt = temp_opt
 
+        # build canonical human nerf
         self.coarse_human_net, _ = vanilla.build_nerf(temp_opt)
         self.coarse_human_net = self.coarse_human_net
 
+        # enable LPIPS loss
         if self.opt.penalize_lpips > 0:
             self.lpips_loss_fn = lpips.LPIPS(net='alex')
             for param in self.lpips_loss_fn.parameters():
@@ -78,9 +79,11 @@ class HumanNeRF(L.LightningModule):
             for param in self.hand_model.parameters():
                 param.requires_grad = False
 
+        # save model architecture
+        self.save_hyperparameters("opt")
+
         # try to load pretrained canonical human model
         self.load_pretrained_human_model(opt)
-
 
     def load_pretrained_human_model(self, opt):
         try:
@@ -97,7 +100,6 @@ class HumanNeRF(L.LightningModule):
             print(e)
             print('train from scratch')
 
-
     def forward(self, batch):
         """
         Calculates Fine RGB Map of a trained Human NeRF
@@ -108,7 +110,7 @@ class HumanNeRF(L.LightningModule):
         _, human_dirs, human_z_vals, can_pts, can_dirs, human_out = self._eval_human_samples(batch)
 
         # get rgb map
-        fine_rgb_map = self.render_rgb_map(
+        fine_rgb_map, disp_map, acc_map, weights, depth_map = self.render_rgb_map(
             human_z_vals=human_z_vals,
             human_dirs=human_dirs,
             human_out=human_out,
@@ -121,13 +123,14 @@ class HumanNeRF(L.LightningModule):
         optim_list = [
             {"params": self.poses, "lr": self.opt.smpl_lr},
             {"params": self.coarse_human_net.parameters(), "lr": self.opt.learning_rate},
-            {"params": self.offset_nets.parameters(), "lr": self.opt.learning_rate},
         ]
+        if self.offset_nets:
+            optim_list.append({"params": self.offset_nets.parameters(), "lr": self.opt.learning_rate})
+
         optimizer = torch.optim.Adam(optim_list)
         return optimizer
 
-
-    def training_step(self, batch, return_rgb=False):
+    def training_step(self, batch, batch_idx):
         """
         Evaluates human nerf on batch, calculates losses
         """
@@ -140,7 +143,7 @@ class HumanNeRF(L.LightningModule):
         _, human_dirs, human_z_vals, can_pts, can_dirs, human_out = self._eval_human_samples(batch)
 
         # get rgb map
-        fine_rgb_map = self.render_rgb_map(
+        fine_rgb_map, disp_map, acc_map, weights, depth_map = self.render_rgb_map(
             human_z_vals=human_z_vals,
             human_dirs=human_dirs,
             human_out=human_out,
@@ -176,17 +179,17 @@ class HumanNeRF(L.LightningModule):
             )
             loss_dict['mask_loss'] = loss_dict['mask_loss'] + F.mse_loss(
                 torch.clamp(human_mask, min=0.0, max=1.0),
-                (1.0-batch['is_bkg'].float())
+                (1.0 - batch['is_bkg'].float())
             ) * self.opt.penalize_mask
 
         # alpha inside smpl mesh should be 1, alpha outside smpl mesh should be 0
-        # if self.penalize_smpl_alpha > 0:
-        #     loss_dict['smpl_shape_reg'] = loss_dict['smpl_shape_reg'] + self._smpl_shape_regularization(batch, can_pts, can_dirs, human_out)
+        if self.penalize_smpl_alpha > 0:
+            loss_dict['smpl_shape_reg'] = loss_dict['smpl_shape_reg'] + self._smpl_shape_regularization(batch, can_pts, can_dirs, human_out)
 
         # sharp edge loss + hard surface loss
         # USES NUMPY
-        # if self.penalize_sharp_edge > 0 or self.penalize_hard_surface > 0:
-        #     loss_dict['sparsity_reg'] = loss_dict['sparsity_reg'] + self._sparsity_regularization(device)
+        if self.penalize_sharp_edge > 0 or self.penalize_hard_surface > 0:
+            loss_dict['sparsity_reg'] = loss_dict['sparsity_reg'] + self._sparsity_regularization(device)
 
         # RGB loss
         loss_dict['fine_rgb_loss'] = loss_dict['fine_rgb_loss'] + rgb_loss.rgb_loss(
@@ -206,6 +209,7 @@ class HumanNeRF(L.LightningModule):
 
         # restart if the network is dead
         if human_out[..., 3].max() <= 0.0:
+            # raise RuntimeError('Network is dead, restarting...')
             self.restart_networks()
             loss_dict = {l: torch.tensor(0.0, requires_grad=True, dtype=torch.float32) for l in
                          LOSS_NAMES}
@@ -214,17 +218,48 @@ class HumanNeRF(L.LightningModule):
         loss_dict['can_loss'] = loss_dict['smpl_sym_reg'] + loss_dict['smpl_shape_reg']
 
         # if we are in the delay phase, only optimize the canonical model, without rgb loss
-        # if self.iteration >= self.opt.delay_iters:
+        # if self.opt.step >= self.opt.delay_iters:
         loss_dict['loss'] = loss_dict['rgb_loss'] + loss_dict['can_loss'] + loss_dict['mask_loss'] + \
-                                  loss_dict['sparsity_reg']
+                            loss_dict['sparsity_reg']
         # else:
         #     loss_dict['total_loss'] = loss_dict['can_loss'] + loss_dict['mask_loss'] + loss_dict['sparsity_reg']
 
-        return loss_dict
-        # if return_rgb:
-        #     return loss_dict, fine_rgb_map
-        # else:
-        #     return loss_dict
+        # log losses
+        self.log_training_data(loss_dict)
+
+        return loss_dict['loss']
+
+    def validation_step(self, batch, batch_idx):
+        # TODO: implement validation step
+        pass
+
+        # print()
+
+        self.log('cuda_usage', torch.cuda.utilization(device=None), on_step=True, on_epoch=True, prog_bar=True)
+
+        # loss = self.training_step(batch.copy(), batch_idx=batch_idx)
+        # self.log_dict(loss, on_step=False, on_epoch=True, prog_bar=False)
+
+        rgb_map = self.forward(batch)
+
+        origins = batch['direction'].cpu().detach().numpy()
+        colors_rendered = rgb_map.cpu().detach().numpy()
+        colors_original = batch['color'].cpu().detach().numpy()
+
+        rendered_img = self.draw_pointclouds(
+            origins,
+            colors_rendered
+        )
+        original_img = self.draw_pointclouds(
+            origins,
+            colors_original
+        )
+
+        tensorboard_logger = self.logger.experiment
+        tensorboard_logger.add_image('rendered_rgb', rendered_img, batch_idx)
+        tensorboard_logger.add_image('original_rgb', original_img, batch_idx)
+
+        # return loss
 
     def _eval_human_samples(self, batch):
         """
@@ -259,7 +294,11 @@ class HumanNeRF(L.LightningModule):
         # predict offset, cur_time and offset are on cuda
         cur_time = torch.ones_like(human_pts[..., 0:1]) * batch['cur_view_f']
         # offset = random.choice(self.offset_nets)(torch.cat([human_pts, cur_time], dim=-1))
-        offset = self.offset_nets[0](torch.cat([human_pts, cur_time], dim=-1))
+
+        if self.offset_nets:
+            offset = self.offset_nets[0](torch.cat([human_pts, cur_time], dim=-1))
+        else:
+            offset = torch.zeros_like(human_pts)
 
         # warp points from observation space to canonical space
         mesh, raw_Ts = self.vertex_forward(int(batch['cap_id']))
@@ -282,7 +321,6 @@ class HumanNeRF(L.LightningModule):
         human_out = self.coarse_human_net(can_pts, can_dirs)
 
         return human_pts, human_dirs, human_z_vals, can_pts, can_dirs, human_out
-
 
     def vertex_forward(self,
                        idx,
@@ -328,11 +366,10 @@ class HumanNeRF(L.LightningModule):
 
         # get transformation matrices from zero pose to scene pose
         _, T_t2pose = self.hand_model.verts_transformations(global_orient=root_pose, hand_pose=hand_pose, betas=shape,
-                                                       transl=trans)
+                                                            transl=trans)
         T_t2pose = T_t2pose.unsqueeze(0)
 
         return scene_pose_verts, T_t2pose
-
 
     def render_rgb_map(self, human_z_vals, human_dirs, human_out, white_bkg):
         # sort the z values in ascending order
@@ -348,17 +385,68 @@ class HumanNeRF(L.LightningModule):
         ]
 
         # render the rgb map
-        fine_rgb_map, _, _, _, _ = render_utils.raw2outputs(
+        fine_rgb_map, disp_map, acc_map, weights, depth_map = render_utils.raw2outputs(
             fine_total_out,
             fine_total_zvals,
             # was: fine_bkg_dirs[:, 0, :],
             human_dirs[:, 0, :],
             white_bkg=white_bkg
         )
-        return fine_rgb_map
+        return fine_rgb_map, disp_map, acc_map, weights, depth_map
+
+    def log_training_data(self, loss_dict):
+        # log losses
+        # self.log_dict(loss_dict, prog_bar=True, logger=True)
+        self.log('loss/total', loss_dict['loss'], prog_bar=True, logger=True)
+        self.log('cuda_usage', torch.cuda.utilization(device=None), prog_bar=True, sync_dist=True)
+
+        opt = self.optimizers()
+
+        # log learning rates
+        self.log('lr/poses', opt.param_groups[0]['lr'])
+        self.log('lr/nerf_offset', opt.param_groups[1]['lr'])
+
+        # log hyper parameters
+        if self.offset_nets:
+            self.log('hyper_params/offset_scale', self.offset_nets[0].nerf.scale)
+
+        self.log('hyper_params/penalize_mask', self.opt.penalize_mask)
+        self.log('hyper_params/penalize_symmetric_alpha', self.opt.penalize_symmetric_alpha)
+        self.log('hyper_params/penalize_dummy', self.opt.penalize_dummy)
+        self.log('hyper_params/penalize_smpl_alpha', self.opt.penalize_smpl_alpha)
 
     def restart_networks(self):
+        raise NotImplementedError('restart_networks not implemented')
         print('bad weights, reinitializing')
         self.offset_nets.apply(weight_reset)
         self.coarse_human_net.apply(weight_reset)
+    #
+    def draw_pointclouds(self, origins, colors):
+        # clip colors to [0, 1]
+        colors = np.clip(colors, 0.0, 1.0)
 
+        # make a 3d plot of the point cloud
+        fig = plt.gcf()
+        ax = fig.add_subplot(111, projection='3d')
+        ax.scatter(origins[:, 0], origins[:, 1], origins[:, 2], c=colors)
+
+        # draw the plot
+        fig.canvas.draw()
+
+        # convert the plot to an image
+        image = np.frombuffer(fig.canvas.tostring_rgb(), dtype='uint8')
+
+        # reshape the image to the correct dimensions
+        size = fig.get_size_inches() * fig.dpi
+        image = image.reshape(int(size[1]), int(size[0]), 3)
+
+        # reshape into CxHxW
+        image = image.transpose((2, 0, 1))
+
+        # use pytorch color channel order
+        # image = image[::-1, :, :]
+
+        # close the plot
+        plt.clf()
+
+        return image

@@ -20,11 +20,15 @@ import numpy as np
 from cameras.captures import ResizedPinholeCapture
 from cameras.pinhole_camera import PinholeCamera
 from models import human_nerf
+from lightning_code import model
 from utils import render_utils, utils
 from data_io import neuman_helper
 from options import options
 from utils.constant import CANONICAL_ZOOM_FACTOR, CANONICAL_CAMERA_DIST
+from datetime import datetime
 
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 def main_canonical_360(opt):
     scene = neuman_helper.NeuManReader.read_scene(
@@ -43,14 +47,53 @@ def main_canonical_360(opt):
     #         can_bones.append(np.linalg.norm(scene.smpls[i]['static_joints_3d'][3] - scene.smpls[i]['static_joints_3d'][0]))
     #     opt.geo_threshold = np.mean(bones)
 
-    net = human_nerf.HumanNeRF(opt)
-    weights = torch.load(opt.weights_path, map_location='cpu')
-    utils.safe_load_weights(net, weights['hybrid_model_state_dict'])
+    # net = human_nerf.HumanNeRF(opt)
+    net = model.HumanNeRF(opt)
 
-    center, up = utils.smpl_verts_to_center_and_up(scene.static_vert[0])
+    weights = torch.load(opt.weights_path, map_location='cpu')
+    utils.safe_load_weights(net, weights['state_dict'])
+
+
+    # verts_to_render = scene.static_vert[0]
+    cap_id = 10
+    verts_to_render = scene.verts[cap_id]
+
+    print(f'Vertices to render: {verts_to_render.shape}')
+    # plot the vertices as 3d points
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(verts_to_render[:, 0], verts_to_render[:, 1], verts_to_render[:, 2])
+
+    plt.show()
+
+    # exit()
+
+    center, up = utils.smpl_verts_to_center_and_up(
+        verts_to_render
+    )
+
     render_poses = render_utils.default_360_path(center, up, CANONICAL_CAMERA_DIST, opt.trajectory_resolution)
 
-    for i, rp in enumerate(render_poses):
+    # get current date and time as string
+    curr_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    # create folders to save images
+    # save_folder_base = f'/home/azhuavlev/Desktop/Results/neuman-mano/interhand/' \
+    #                 f'canonical_360/{curr_time}'
+
+    # get parent parent directory of weights path
+    save_folder_base = os.path.join(os.path.dirname(os.path.dirname(opt.weights_path)), 'canonical_360')
+    save_folder_rgb = os.path.join(save_folder_base, 'rgb')
+    save_folder_depth = os.path.join(save_folder_base, 'depth')
+    save_folder_acc = os.path.join(save_folder_base, 'acc')
+
+    # create folders if they don't exist
+    for folder in [save_folder_rgb, save_folder_depth, save_folder_acc]:
+        if not os.path.isdir(folder):
+            os.makedirs(folder)
+
+    # render and save images
+    for i, rp in enumerate(tqdm(render_poses)):
         can_cap = ResizedPinholeCapture(
             PinholeCamera(
                 scene.captures[0].pinhole_cam.width,
@@ -63,30 +106,32 @@ def main_canonical_360(opt):
             rp,
             tgt_size=scene.captures[0].pinhole_cam.shape
         )
-        out = render_utils.render_smpl_nerf(
+        rgb, depth, acc = render_utils.render_smpl_nerf(
             net,
             can_cap,
-            scene.static_vert[0],
+            verts_to_render,
             scene.faces,
-            Ts=None,
+            Ts=scene.Ts[cap_id],
             rays_per_batch=opt.rays_per_batch,
             samples_per_ray=opt.samples_per_ray,
-            render_can=True,
-            return_mask=False,
-            return_depth=False,
+            render_can=False,
+            return_mask=True,
+            return_depth=True,
             interval_comp=opt.geo_threshold #/ np.mean(can_bones)
         )
 
-        save_path = os.path.join(
-            opt.scene_dir,
-            f'canonical_360',
-            f'out_{str(i).zfill(4)}.png'
-        )
+        for img, folder in zip([rgb, depth, acc], [save_folder_rgb, save_folder_depth, save_folder_acc]):
+            save_path = os.path.join(
+                folder,
+                f'out_{str(i).zfill(4)}.png'
+            )
 
-        if not os.path.isdir(os.path.dirname(save_path)):
-            os.makedirs(os.path.dirname(save_path))
-        imageio.imsave(save_path, out)
-        print(f'image saved: {save_path}')
+            # normalize and convert to uint8
+            img = img / np.max(img)
+            img = (img * 255).astype(np.uint8)
+
+            imageio.imsave(save_path, img)
+
 
 
 def main_posed_360(opt):
@@ -157,6 +202,7 @@ if __name__ == "__main__":
     parser.add_argument('--mode', required=True, choices=['canonical_360', 'posed_360'], type=str, help='rendering mode')
     parser.add_argument('--num_offset_nets', default=1, type=int, help='how many offset networks')
     parser.add_argument('--offset_scale_type', default='linear', type=str, help='no/linear/tanh')
+    parser.add_argument('--penalize_lpips', default=True, type=bool, help='enables lpips loss for human nerf')
 
     opt = parser.parse_args()
     assert opt.geo_threshold == -1, 'please use auto geo_threshold'

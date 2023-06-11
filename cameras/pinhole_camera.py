@@ -33,7 +33,7 @@ class PinholeCamera():
 
     @property
     def shape(self):
-        return (self.height, self.width)
+        return self.height, self.width
 
     @property
     def size(self):

@@ -44,7 +44,7 @@ class HumanRayDataset(data.Dataset):
     We use random rays from a SINGLE time stamp per batch.
     '''
 
-    def __init__(self, opt, scene, dset_type, split, near_far_cache=None):
+    def __init__(self, opt, scene, dset_type, split, n_repeats, near_far_cache=None):
         '''
         Args:
             opt (Namespace): options
@@ -64,6 +64,8 @@ class HumanRayDataset(data.Dataset):
         print(f'{dset_type} dataset has {len(self.inclusions)} samples: {self.inclusions}')
         self.white_bkg = opt.white_bkg
         self.batch_size = opt.rays_per_batch
+
+        self.n_repeats = n_repeats
 
         if near_far_cache is None:
             cache_helper.export_near_far_cache(opt, scene, opt.geo_threshold, opt.chunk, self.device)
@@ -86,7 +88,7 @@ class HumanRayDataset(data.Dataset):
         #     return VALIDATION_SET_LENGTH
         # else:
         #     raise ValueError
-        return len(self.inclusions)
+        return len(self.inclusions) * self.n_repeats
 
     def get_num_rays_dict(self, num):
         """
@@ -136,7 +138,11 @@ class HumanRayDataset(data.Dataset):
 
         # TODO rewrite to get the capture specified by cap_id, instead of randomly sampling one
         # cap_id = self.scene.fname_to_index_dict[random.choice(self.inclusions)]
-        cap_id = self.scene.fname_to_index_dict[self.inclusions[index]]
+        cap_id = self.scene.fname_to_index_dict[
+            self.inclusions[
+                index % len(self.inclusions)
+            ]
+        ]
 
         assert 0 <= cap_id < len(self.scene.captures)
         caps = self.scene.get_captures_by_view_id(cap_id)
