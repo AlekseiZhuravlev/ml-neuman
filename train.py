@@ -86,8 +86,9 @@ def train_human(opt):
 
     print(f'os.cpu_count {os.cpu_count()}, len(os.sched_getaffinity(0)) {len(os.sched_getaffinity(0))}')
 
-    worker_count = min(os.cpu_count(), len(os.sched_getaffinity(0))) // torch.cuda.device_count()
-    print(f'worker_count {worker_count}')
+    # worker_count = min(os.cpu_count(), len(os.sched_getaffinity(0))) // torch.cuda.device_count()
+    worker_count = 4
+    # print(f'worker_count {worker_count}')
     # worker_count = 0
 
     train_loader = DataLoader(
@@ -100,8 +101,8 @@ def train_human(opt):
     val_loader = DataLoader(
         val_dset,
         batch_size=1,
-        num_workers=worker_count,
-        pin_memory=True,
+        num_workers=0,
+        # pin_memory=True,
     )
 
 
@@ -125,7 +126,7 @@ def train_human(opt):
                 benchmark=True,
                 logger=logger,
                 default_root_dir=opt.out_dir + '/' + opt.name,
-                check_val_every_n_epoch=100,
+                check_val_every_n_epoch=5,
                 log_every_n_steps=100,
                 # profiler=profiler,
                 # profiler='simple',

@@ -202,6 +202,8 @@ def render_smpl_nerf(net, cap, posed_verts, faces, Ts, rays_per_batch=32768, sam
             depth_map = torch.zeros_like(origins[i:i + rays_per_batch, 0]).to(device)
             acc_map = torch.zeros_like(origins[i:i + rays_per_batch, 0]).to(device)
             temp_near, temp_far = ray_utils.geometry_guided_near_far(origins[i:i + rays_per_batch], dirs[i:i + rays_per_batch], posed_verts, geo_threshold)
+
+
             if (temp_near >= temp_far).any():
                 if white_bkg:
                     rgb_map[temp_near >= temp_far] = 1.0

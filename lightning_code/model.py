@@ -37,7 +37,6 @@ class HumanNeRF(L.LightningModule):
         super().__init__()
 
         # build offset nets
-
         if opt.num_offset_nets > 0:
             self.offset_nets = nn.ModuleList([vanilla.build_offset_net(opt) for i in range(opt.num_offset_nets)])
         else:
@@ -183,13 +182,26 @@ class HumanNeRF(L.LightningModule):
             ) * self.opt.penalize_mask
 
         # alpha inside smpl mesh should be 1, alpha outside smpl mesh should be 0
-        if self.penalize_smpl_alpha > 0:
-            loss_dict['smpl_shape_reg'] = loss_dict['smpl_shape_reg'] + self._smpl_shape_regularization(batch, can_pts, can_dirs, human_out)
+        if self.opt.penalize_smpl_alpha > 0:
+            loss_dict['smpl_shape_reg'] = loss_dict['smpl_shape_reg'] + \
+                                          smpl_shape_regularization.smpl_shape_regularization(
+                                              batch['verts'],
+                                              batch['faces'],
+                                              can_pts,
+                                              can_dirs,
+                                              human_out,
+                                              1
+                                          )
 
         # sharp edge loss + hard surface loss
-        # USES NUMPY
-        if self.penalize_sharp_edge > 0 or self.penalize_hard_surface > 0:
-            loss_dict['sparsity_reg'] = loss_dict['sparsity_reg'] + self._sparsity_regularization(device)
+        if self.opt.penalize_sharp_edge > 0 or self.opt.penalize_hard_surface > 0:
+            loss_dict['sparsity_reg'] = loss_dict['sparsity_reg'] + \
+                                        sparsity_regularization.sparsity_regularization(
+                can_mask=acc_map,
+                can_weights=weights,
+                penalize_sharp_edge=self.opt.penalize_sharp_edge,
+                penalize_hard_surface=self.opt.penalize_hard_surface,
+            )
 
         # RGB loss
         loss_dict['fine_rgb_loss'] = loss_dict['fine_rgb_loss'] + rgb_loss.rgb_loss(
@@ -211,18 +223,20 @@ class HumanNeRF(L.LightningModule):
         if human_out[..., 3].max() <= 0.0:
             # raise RuntimeError('Network is dead, restarting...')
             self.restart_networks()
-            loss_dict = {l: torch.tensor(0.0, requires_grad=True, dtype=torch.float32) for l in
-                         LOSS_NAMES}
+            print('human_out[..., 3].max() <= 0.0:')
+            # return None
+
 
         loss_dict['rgb_loss'] = loss_dict['fine_rgb_loss'] + loss_dict['color_range_reg'] + loss_dict['lpips_loss']
         loss_dict['can_loss'] = loss_dict['smpl_sym_reg'] + loss_dict['smpl_shape_reg']
+        loss_dict['geom_loss'] = loss_dict['mask_loss'] + loss_dict['sparsity_reg']
 
+        # TODO implement this
         # if we are in the delay phase, only optimize the canonical model, without rgb loss
-        # if self.opt.step >= self.opt.delay_iters:
-        loss_dict['loss'] = loss_dict['rgb_loss'] + loss_dict['can_loss'] + loss_dict['mask_loss'] + \
-                            loss_dict['sparsity_reg']
-        # else:
-        #     loss_dict['total_loss'] = loss_dict['can_loss'] + loss_dict['mask_loss'] + loss_dict['sparsity_reg']
+        if self.current_epoch >= self.opt.delay_iters:
+            loss_dict['loss'] = loss_dict['rgb_loss'] + loss_dict['can_loss'] + loss_dict['geom_loss']
+        else:
+            loss_dict['loss'] = loss_dict['can_loss'] + loss_dict['geom_loss']
 
         # log losses
         self.log_training_data(loss_dict)
@@ -232,10 +246,6 @@ class HumanNeRF(L.LightningModule):
     def validation_step(self, batch, batch_idx):
         # TODO: implement validation step
         pass
-
-        # print()
-
-        self.log('cuda_usage', torch.cuda.utilization(device=None), on_step=True, on_epoch=True, prog_bar=True)
 
         # loss = self.training_step(batch.copy(), batch_idx=batch_idx)
         # self.log_dict(loss, on_step=False, on_epoch=True, prog_bar=False)
@@ -278,7 +288,6 @@ class HumanNeRF(L.LightningModule):
         }
 
         # get samples for human rays
-        # TODO: ray_to_samples has .to(device) in it
         human_samples = ray_utils.ray_to_samples(
             human_batch,
             self.opt.samples_per_ray,
@@ -307,6 +316,60 @@ class HumanNeRF(L.LightningModule):
 
         # new method
         Ts = ray_utils.warp_samples_gpu(pts=human_pts, verts=mesh[0], T=raw_Ts[0])
+
+        ###########################################################################################
+        # Plot for debugging
+        #########################################3#################################################
+
+        # can_pts = (Ts @ ray_utils.to_homogeneous(human_pts)[..., None])[:, :3, 0] #.reshape(human_b, human_n,
+        #                                                                            #       3)
+
+        # plot mesh as 3d point cloud
+        # import matplotlib.pyplot as plt
+        # from mpl_toolkits.mplot3d import Axes3D
+        # fig = plt.figure()
+        #
+        # human_pts = human_pts.cpu().detach().numpy()[::100, :]
+        # mesh = mesh[0].cpu().detach().numpy()
+        # raw_Ts = torch.inverse(raw_Ts[0]).cpu().detach().numpy()
+        #
+        # can_mesh = (raw_Ts @ ray_utils.to_homogeneous(mesh)[..., None])[:, :3, 0]
+        #
+        # # set alpha to 0.1 for human points
+        #
+        # ax = fig.add_subplot(121, projection='3d')
+        # ax.scatter(human_pts[:, 0], human_pts[:, 1], human_pts[:, 2], c='r', marker='o', alpha=0.3)
+        #
+        # # ax = fig.add_subplot(112, projection='3d')
+        # ax.scatter(mesh[:, 0], mesh[:, 1], mesh[:, 2], c='b', marker='o')
+        #
+        # ax.set_title('human_pts (red) and mesh (blue) in observation space')
+        #
+        # ax = fig.add_subplot(122, projection='3d')
+        # ax.scatter(can_mesh[:, 0], can_mesh[:, 1], can_mesh[:, 2], c='g', marker='o')
+        #
+        # can_pts = can_pts.cpu().detach().numpy().reshape(-1, 3)[::100, :]
+        # print('can_pts.shape', can_pts.shape, can_pts)
+        # # exit()
+        # ax.scatter(can_pts[:, 0], can_pts[:, 1], can_pts[:, 2], c='y', marker='o', alpha=0.3)
+        #
+        # ax.set_title('can_mesh (green) and can_pts (yellow) in canonical space')
+        #
+        # print('human_pts.shape', human_pts.shape, human_pts)
+        # print('mesh.shape', mesh.shape, mesh)
+        #
+        # print('human_near', batch['human_near'])
+        # print('human_far', batch['human_far'])
+        # print('cap_id', batch['cap_id'])
+        #
+        # # save figure as pickle
+        # import pickle
+        # with open('/home/azhuavlev/PycharmProjects/ml-neuman_mano/out/mesh.pkl', 'wb') as f:
+        #     pickle.dump(fig, f)
+        #
+        # exit()
+
+        ################################################################################################
 
         # get canonical points and apply offset
         can_pts = (Ts @ ray_utils.to_homogeneous(human_pts)[..., None])[:, :3, 0].reshape(human_b, human_n, 3)
@@ -397,7 +460,12 @@ class HumanNeRF(L.LightningModule):
     def log_training_data(self, loss_dict):
         # log losses
         # self.log_dict(loss_dict, prog_bar=True, logger=True)
-        self.log('loss/total', loss_dict['loss'], prog_bar=True, logger=True)
+
+        self.log('total_loss', loss_dict['loss'], prog_bar=True, logger=True)
+        self.log('rgb_loss', loss_dict['rgb_loss'], prog_bar=True, logger=True)
+        self.log('can_loss', loss_dict['can_loss'], prog_bar=True, logger=True)
+        self.log('geom_loss', loss_dict['geom_loss'], prog_bar=True, logger=True)
+
         self.log('cuda_usage', torch.cuda.utilization(device=None), prog_bar=True, sync_dist=True)
 
         opt = self.optimizers()

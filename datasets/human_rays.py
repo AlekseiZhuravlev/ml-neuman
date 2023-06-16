@@ -19,6 +19,8 @@ from options.options import str2bool
 from options import options
 import math
 
+from pytorch3d.datasets.utils import collate_batched_meshes
+
 
 def get_left_upper_corner(img, pos, size=PATCH_SIZE):
     '''
@@ -181,6 +183,7 @@ class HumanRayDataset(data.Dataset):
         is_bkg_list     = []
         is_hit_list     = []
         coords_list     = {i: [] for i in range(len(caps))}
+        meshes_list = []
 
         for cam_id, (cap, num) in enumerate(zip(caps, bins)):
             if num == 0:
@@ -252,17 +255,28 @@ class HumanRayDataset(data.Dataset):
                 # get ray origins and directions
                 orig, dir = ray_utils.shot_rays(cap, coords)
 
-                # get human and background near/far
-                cache = self.near_far_cache[os.path.basename(cap.image_path)][coords[:, 1], coords[:, 0]]
-                valid = cache[..., NEAR_INDEX] < cache[..., FAR_INDEX]
+                # normal human_near
                 human_near = np.stack([[cap.near['human']]] * num_rays)
                 human_far = np.stack([[cap.far['human']]] * num_rays)
-                human_near[valid, 0] = cache[valid][:, NEAR_INDEX]
-                human_far[valid, 0] = cache[valid][:, FAR_INDEX]
+
+                valid = (human_near < human_far).flatten()
+                # print('normal_valid', valid.shape, valid)
+
+
+                # get human and background near/far - disabled, corrupts data
+                # cache = self.near_far_cache[os.path.basename(cap.image_path)][coords[:, 1], coords[:, 0]]
+                # valid = cache[..., NEAR_INDEX] < cache[..., FAR_INDEX]
+                #
+                # print('cache_valid', valid.shape, valid)
+
+                # exit()
+                # # corrupted human_near
+                # human_near[valid, 0] = cache[valid][:, NEAR_INDEX]
+                # human_far[valid, 0] = cache[valid][:, FAR_INDEX]
 
                 # NOTE this is hard coded, we have no background in the dataset
                 if 'bkg' not in cap.near:
-                    cap.near['bkg'] = -1000
+                    cap.near['bkg'] = 0.1
                     cap.far['bkg'] = 1000
                 bkg_near = np.stack([[cap.near['bkg']]] * num_rays)
                 bkg_far = np.stack([[cap.far['bkg']]] * num_rays)
@@ -298,6 +312,10 @@ class HumanRayDataset(data.Dataset):
                is_bkg_list.shape[0] == \
                is_hit_list.shape[0] == \
                self.batch_size
+
+        # print('self.scene.static_vert[cap_id]', self.scene.static_vert[cap_id].shape)
+        # print('self.scene.faces', self.scene.faces.shape)
+
         out = {
             'color':         torch.from_numpy(colors_list).float(),
             'origin':        torch.from_numpy(orig_list).float(),
@@ -312,6 +330,14 @@ class HumanRayDataset(data.Dataset):
             'cur_view':      torch.tensor(cap.frame_id['frame_id'], dtype=torch.int32),
             'cap_id':        torch.tensor(cap_id, dtype=torch.int32),
             'patch_counter': torch.tensor(patch_counter, dtype=torch.int32),
+            # 'can_mesh': collate_batched_meshes([
+            #     {
+            #     # 'verts': torch.from_numpy(self.scene.static_vert[cap_id])[None],
+            #     # 'faces': torch.from_numpy(self.scene.faces[:, :3])[None],
+            #     }
+            #     ]),
+            'verts': torch.from_numpy(self.scene.static_vert[cap_id])[None],
+            'faces': torch.from_numpy(self.scene.faces[:, :3])[None],
         }
 
         return out

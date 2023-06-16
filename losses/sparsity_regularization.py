@@ -1,9 +1,53 @@
+from utils.constant import HARD_SURFACE_OFFSET
+import torch
+
+def sparsity_regularization(
+        can_mask,
+        can_weights,
+        penalize_sharp_edge,
+        penalize_hard_surface,
+):
+    """
+    Penalizes rendered mask and weights for sharp edges and hard surfaces
+    """
+
+    # make sure the weights and mask are in [0, 1]
+    can_mask = torch.clip(can_mask, 0.0, 1.0)
+    can_weights = torch.clip(can_weights, 0.0, 1.0)
+
+    sparsity_reg = torch.tensor(0.0, requires_grad=True, device=can_mask.device)
+
+    # sharp edge loss
+    sparsity_reg = sparsity_reg + \
+                   torch.mean(
+                       -torch.log
+                           (
+                           torch.exp(-torch.abs(can_mask)) +
+                           torch.exp(-torch.abs(1 - can_mask))
+                       ) + HARD_SURFACE_OFFSET) * \
+                   penalize_sharp_edge
+
+    # hard surface loss
+    sparsity_reg = sparsity_reg + \
+                   torch.mean(
+                       -torch.log
+                           (
+                           torch.exp(-torch.abs(can_weights)) +
+                           torch.exp(-torch.abs(1 - can_weights))
+                       ) + HARD_SURFACE_OFFSET) \
+                   * penalize_hard_surface
+
+    return sparsity_reg
+
+
+
 def _sparsity_regularization_original(device):
     """
     Sample random straight rays in canonical space
     Get the output of the model
     Penalize
     """
+    raise NotImplementedError
 
     sparsity_reg = torch.tensor(0.0, requires_grad=True, device=device)
 

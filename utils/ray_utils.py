@@ -170,6 +170,7 @@ def ray_to_samples(ray_batch,
     assert near.shape[0] == far.shape[0] == rays_per_batch
 
     t_vals = torch.linspace(0., 1., steps=samples_per_ray, device=device)
+
     if not lindisp:
         z_vals = near * (1.-t_vals) + far * (t_vals)
     else:
@@ -180,6 +181,7 @@ def ray_to_samples(ray_batch,
         mids = .5 * (z_vals[..., 1:] + z_vals[..., :-1])
         upper = torch.cat([mids, z_vals[..., -1:]], -1)
         lower = torch.cat([z_vals[..., :1], mids], -1)
+
         # stratified samples in those intervals
         t_rand = torch.clip(
             torch.rand(z_vals.shape, device=device),
@@ -265,18 +267,27 @@ def geometry_guided_near_far(orig, dir, vert, geo_threshold):
 def geometry_guided_near_far_torch(orig, dir, vert, geo_threshold=DEFAULT_GEO_THRESH):
     num_vert = vert.shape[0]
     num_rays = orig.shape[0]
+
     orig_ = torch.repeat_interleave(orig[:, None, :], num_vert, 1)
     dir_ = torch.repeat_interleave(dir[:, None, :], num_vert, 1)
     vert_ = torch.repeat_interleave(vert[None, ...], num_rays, 0)
+
     orig_v = vert_ - orig_
+
     z0 = torch.einsum('ij,ij->i', orig_v.reshape(-1, 3), dir_.reshape(-1, 3)).reshape(num_rays, num_vert)
+
     dz = torch.sqrt(geo_threshold**2 - (torch.norm(orig_v, dim=2)**2 - z0**2))
+
     near = z0 - dz
+
+    # print(near)
     near[near != near] = float('inf')
     near = near.min(dim=1)[0]
+
     far = z0 + dz
     far[far != far] = float('-inf')
     far = far.max(dim=1)[0]
+
     return near, far
 
 

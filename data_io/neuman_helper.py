@@ -22,6 +22,7 @@ import json
 import torch
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation
+import trimesh
 
 class NeuManCapture(captures_module.RigRGBDPinholeCapture):
     def __init__(self, image_path, depth_path, mask_path, pinhole_cam, cam_pose, view_id, cam_id, mono_depth_path=None, keypoints_path=None, densepose_path=None):
@@ -220,13 +221,15 @@ class NeuManReader():
 
                             near = pcd_2d_human[:, 2].min()
                             far = pcd_2d_human[:, 2].max()
+
                         else:
                             raise ValueError(k)
+
                         center = (near + far) / 2
                         length = (far - near) * range_scale
+
                         cur_cap.near[k] = max(0.0, float(center - length / 2))
                         cur_cap.far[k] = float(center + length / 2)
-
 
         captures, point_cloud, num_views, num_cams = cls.read_captures(scene_dir, tgt_size, mask_dir=mask_dir, keypoints_dir=keypoints_dir, densepose_dir=densepose_dir)
         scene = scene_module.RigCameraScene(captures, num_views, num_cams)
@@ -253,11 +256,31 @@ class NeuManReader():
         smpls, world_verts, static_verts, Ts = cls.read_smpls(scene_dir, scene.captures, scale=scale, smpl_type=smpl_type)
         scene.smpls, scene.verts, scene.static_vert, scene.Ts = smpls, world_verts, static_verts, Ts
 
+
         _, uvs, faces = utils.read_obj(
             '/itet-stor/azhuavlev/net_scratch/Projects/Data/models/mano/uv_maps/MANO_UV_left.obj'
         )
+        # print(scene.static_vert[0].shape)
+        # print(faces.shape)
+        # mesh = trimesh.Trimesh(vertices=scene.static_vert[0], faces=faces[:, :3])
+        # print(mesh.is_watertight)
+        # trimesh.repair.fill_holes(mesh)
+        # print(mesh.is_watertight)
 
-        scene.uvs, scene.faces = uvs, faces
+        pcl = trimesh.points.PointCloud(scene.static_vert[0])
+        hull = pcl.convex_hull
+        # print(hull.is_watertight)
+
+        scene.uvs, scene.faces = uvs, hull.faces
+
+        # replace scene.static_vert with hull.vertices
+        scene.static_vert = [hull.vertices] * len(static_verts)
+        # print(scene.static_vert[0].shape)
+
+        # original
+        # scene.uvs, scene.faces = uvs, faces
+
+
         update_near_far(scene, ['human'], human_range_scale)
 
         assert len(scene.captures) > 0
