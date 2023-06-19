@@ -267,14 +267,47 @@ class NeuManReader():
         # trimesh.repair.fill_holes(mesh)
         # print(mesh.is_watertight)
 
-        pcl = trimesh.points.PointCloud(scene.static_vert[0])
-        hull = pcl.convex_hull
-        # print(hull.is_watertight)
+        # pcl = trimesh.points.PointCloud(scene.static_vert[0])
+        # hull = pcl.convex_hull
+        # # print(hull.is_watertight)
+        #
+        # scene.uvs, scene.faces = uvs, hull.faces
+        #
+        # # replace scene.static_vert with hull.vertices
+        # scene.static_vert = [hull.vertices] * len(static_verts)
 
-        scene.uvs, scene.faces = uvs, hull.faces
 
-        # replace scene.static_vert with hull.vertices
-        scene.static_vert = [hull.vertices] * len(static_verts)
+        # mesh = trimesh.Trimesh(vertices=scene.static_vert[0], faces=faces[:, :3])
+        #
+        # from trimesh.voxel import creation, morphology
+        #
+        # voxels = creation.voxelize(mesh, 0.002, 'ray')
+        # print(voxels.points.shape)
+
+        # voxels = creation.voxelize(mesh, 0.002, 'subdivide')
+        # print(voxels.points.shape)
+
+        # voxels = creation.voxelize(mesh, 0.002, 'binvox')
+        # print(voxels.points.shape)
+        #
+        # exit()
+        # print(trimesh.voxel.morphology.fill(
+        #     voxels
+        # ).points.shape)
+        # exit()
+
+
+        # exit()
+
+
+        # scene.static_vert = [sample_points] * len(static_verts)
+        # scene.uvs = uvs
+        scene.uvs, scene.faces = uvs, faces
+
+
+
+        # exit()
+
         # print(scene.static_vert[0].shape)
 
         # original
@@ -338,6 +371,13 @@ class NeuManReader():
                 betas= torch.zeros_like(shape),
                 transl=torch.zeros_like(trans)
             )
+
+            # print('torch.zeros_like(root_pose)', torch.zeros_like(root_pose).shape)
+            # print('torch.zeros_like(hand_pose)', torch.zeros_like(hand_pose).shape)
+            # print('torch.zeros_like(shape)', torch.zeros_like(shape).shape)
+            # print('torch.zeros_like(trans)', torch.zeros_like(trans).shape)
+            # exit()
+
             zero_pose_verts, zero_pose_joints = output.vertices, output.joints
 
             # verts_to_render = zero_pose_verts[0]

@@ -330,14 +330,6 @@ class HumanRayDataset(data.Dataset):
             'cur_view':      torch.tensor(cap.frame_id['frame_id'], dtype=torch.int32),
             'cap_id':        torch.tensor(cap_id, dtype=torch.int32),
             'patch_counter': torch.tensor(patch_counter, dtype=torch.int32),
-            # 'can_mesh': collate_batched_meshes([
-            #     {
-            #     # 'verts': torch.from_numpy(self.scene.static_vert[cap_id])[None],
-            #     # 'faces': torch.from_numpy(self.scene.faces[:, :3])[None],
-            #     }
-            #     ]),
-            'verts': torch.from_numpy(self.scene.static_vert[cap_id])[None],
-            'faces': torch.from_numpy(self.scene.faces[:, :3])[None],
         }
 
         return out

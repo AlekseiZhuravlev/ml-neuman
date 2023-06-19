@@ -55,16 +55,16 @@ def main_canonical_360(opt):
 
 
     # verts_to_render = scene.static_vert[0]
-    cap_id = 50
+    cap_id = 1
     verts_to_render = scene.verts[cap_id]
 
-    print(f'Vertices to render: {verts_to_render.shape}')
-    # plot the vertices as 3d points
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    ax.scatter(verts_to_render[:, 0], verts_to_render[:, 1], verts_to_render[:, 2])
-
-    plt.show()
+    # print(f'Vertices to render: {verts_to_render.shape}')
+    # # plot the vertices as 3d points
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111, projection='3d')
+    # ax.scatter(verts_to_render[:, 0], verts_to_render[:, 1], verts_to_render[:, 2])
+    #
+    # plt.show()
 
     # exit()
 
@@ -95,18 +95,19 @@ def main_canonical_360(opt):
 
     # render and save images
     for i, rp in enumerate(tqdm(render_poses)):
-        can_cap = ResizedPinholeCapture(
-            PinholeCamera(
-                scene.captures[0].pinhole_cam.width,
-                scene.captures[0].pinhole_cam.height,
-                CANONICAL_ZOOM_FACTOR * scene.captures[0].pinhole_cam.width,
-                CANONICAL_ZOOM_FACTOR * scene.captures[0].pinhole_cam.width,
-                scene.captures[0].pinhole_cam.width / 2.0,
-                scene.captures[0].pinhole_cam.height / 2.0,
-            ),
-            rp,
-            tgt_size=scene.captures[0].pinhole_cam.shape
-        )
+        # can_cap = ResizedPinholeCapture(
+        #     PinholeCamera(
+        #         scene.captures[0].pinhole_cam.width,
+        #         scene.captures[0].pinhole_cam.height,
+        #         CANONICAL_ZOOM_FACTOR * scene.captures[0].pinhole_cam.width,
+        #         CANONICAL_ZOOM_FACTOR * scene.captures[0].pinhole_cam.width,
+        #         scene.captures[0].pinhole_cam.width / 2.0,
+        #         scene.captures[0].pinhole_cam.height / 2.0,
+        #     ),
+        #     rp,
+        #     tgt_size=scene.captures[0].pinhole_cam.shape
+        # )
+        can_cap = scene.captures[cap_id]
         rgb, depth, acc = render_utils.render_smpl_nerf(
             net,
             can_cap,

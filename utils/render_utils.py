@@ -20,6 +20,8 @@ from utils import ray_utils
 from utils.constant import DEFAULT_GEO_THRESH
 from geometry import transformations
 
+import matplotlib.pyplot as plt
+
 trans_t = lambda t: np.array([
     [1, 0, 0, 0],
     [0, 1, 0, 0],
@@ -184,10 +186,29 @@ def render_smpl_nerf(net, cap, posed_verts, faces, Ts, rays_per_batch=32768, sam
     with torch.set_grad_enabled(False):
 
         # get ray origins and directions
-        coords = np.argwhere(np.ones(cap.shape))[:, ::-1]
+        # coords = np.argwhere(np.ones(cap.shape))[:, ::-1]
+
+        coords = np.argwhere(cap.mask != 0)[:, ::-1]
+        print(coords)
+
+        # exit()
+
         origins, dirs = ray_utils.shot_rays(cap, coords)
         origins, dirs = torch.from_numpy(origins).to(device), torch.from_numpy(dirs).to(device)
 
+        # print(coords, coords.shape)
+        # plt.plot(coords[:, 0], coords[:, 1], 'r.')
+        # plt.show()
+        # exit()
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        ax.scatter(dirs[:, 0], dirs[:, 1], dirs[:, 2], c='r', marker='o', s=0.5)
+
+        ax.scatter(origins[:, 0], origins[:, 1], origins[:, 2], c='b', marker='o')
+        ax.set_title('dirs')
+        plt.show()
+        exit()
 
         posed_verts = torch.from_numpy(posed_verts).to(device)
 
@@ -196,14 +217,34 @@ def render_smpl_nerf(net, cap, posed_verts, faces, Ts, rays_per_batch=32768, sam
         total_rgb_map = []
         total_depth_map = []
         total_acc_map = []
+
         for i in range(0, total_rays, rays_per_batch):
+
+            # rays_per_batch = 10
+
             # print(f'{i} / {total_rays}')
+
+            # initialize rgb, depth, and accuarcy maps with zeros
             rgb_map = torch.zeros_like(origins[i:i + rays_per_batch]).to(device)
             depth_map = torch.zeros_like(origins[i:i + rays_per_batch, 0]).to(device)
             acc_map = torch.zeros_like(origins[i:i + rays_per_batch, 0]).to(device)
+
+            # get near and far points for each ray
             temp_near, temp_far = ray_utils.geometry_guided_near_far(origins[i:i + rays_per_batch], dirs[i:i + rays_per_batch], posed_verts, geo_threshold)
 
+            # temp_near = torch.ones_like(temp_near) * cap.near['human']
+            # temp_far = torch.ones_like(temp_far) * cap.far['human']
 
+            # print('temp_near', temp_near)
+            # print('temp_far', temp_far)
+            #
+            # print(dir(cap))
+            # print('cap.near', cap.near['human'])
+            # print('cap.far', cap.far['human'])
+            #
+            # exit()
+
+            # set background to white for points with near >= far
             if (temp_near >= temp_far).any():
                 if white_bkg:
                     rgb_map[temp_near >= temp_far] = 1.0
@@ -211,14 +252,34 @@ def render_smpl_nerf(net, cap, posed_verts, faces, Ts, rays_per_batch=32768, sam
                     rgb_map[temp_near >= temp_far] = 0.0
                 depth_map[temp_near >= temp_far] = 0.0
                 acc_map[temp_near >= temp_far] = 0.0
+
             if (temp_near < temp_far).any():
+                # build ray batch
+
                 ray_batch = build_batch(
                     origins[i:i + rays_per_batch][temp_near < temp_far],
                     dirs[i:i + rays_per_batch][temp_near < temp_far],
                     temp_near[temp_near < temp_far],
                     temp_far[temp_near < temp_far]
                 )
+
+                # get samples along each ray
                 _pts, _dirs, _z_vals = ray_utils.ray_to_samples(ray_batch, samples_per_ray, device=device)
+
+                ray_origins = origins[i:i + rays_per_batch]
+                # plot _pts as scatter 3d
+                fig = plt.figure()
+                ax = fig.add_subplot(121, projection='3d')
+                ax.scatter(_pts[:, 0], _pts[:, 1], _pts[:, 2])
+                ax.set_title('pts')
+
+                ax = fig.add_subplot(122, projection='3d')
+                ax.scatter(_z_vals[:, 0], _z_vals[:, 1], _z_vals[:, 2])
+                ax.set_title('_z_vals')
+                plt.show()
+                exit()
+
+
                 if render_can:
                     can_pts = _pts
                     can_dirs = _dirs
@@ -227,6 +288,8 @@ def render_smpl_nerf(net, cap, posed_verts, faces, Ts, rays_per_batch=32768, sam
                     # print('posed_verts.shape', posed_verts.shape)
                     # print('faces.shape', faces.shape)
                     # print('Ts.shape', Ts.shape)
+
+                    # warp samples to canonical space
                     can_pts, can_dirs, _ = ray_utils.warp_samples_to_canonical(
                         _pts.cpu().numpy(),
                         posed_verts.cpu().numpy(),
@@ -235,21 +298,30 @@ def render_smpl_nerf(net, cap, posed_verts, faces, Ts, rays_per_batch=32768, sam
                     )
                     can_pts = torch.from_numpy(can_pts)
                     can_dirs = torch.from_numpy(can_dirs)
-                    # can_pts, can_dirs = ray_utils.warp_samples_to_canonical(
+
                 can_pts = can_pts.to(device).float()
                 can_dirs = can_dirs.to(device).float()
+
+                # get outputs of nerf
                 out = net.coarse_human_net(can_pts, can_dirs)
                 out[..., -1] *= interval_comp
+
+                # convert outputs to readable format
                 _rgb_map, _, _acc_map, _, _depth_map = raw2outputs(out, _z_vals, _dirs[:, 0, :], white_bkg=white_bkg)
+
+                # store rgb, depth, and accuracy maps where near < far
                 rgb_map[temp_near < temp_far] = _rgb_map
                 depth_map[temp_near < temp_far] = _depth_map
                 acc_map[temp_near < temp_far] = _acc_map
+
             total_rgb_map.append(rgb_map)
             total_depth_map.append(depth_map)
             total_acc_map.append(acc_map)
+
         total_rgb_map = torch.cat(total_rgb_map).reshape(*cap.shape, -1).detach().cpu().numpy()
         total_depth_map = torch.cat(total_depth_map).reshape(*cap.shape).detach().cpu().numpy()
         total_acc_map = torch.cat(total_acc_map).reshape(*cap.shape).detach().cpu().numpy()
+
     if return_depth and return_mask:
         return total_rgb_map, total_depth_map, total_acc_map
     if return_depth:

@@ -87,7 +87,7 @@ def train_human(opt):
     print(f'os.cpu_count {os.cpu_count()}, len(os.sched_getaffinity(0)) {len(os.sched_getaffinity(0))}')
 
     # worker_count = min(os.cpu_count(), len(os.sched_getaffinity(0))) // torch.cuda.device_count()
-    worker_count = 4
+    worker_count = torch.cuda.device_count() * 5 if torch.cuda.device_count() else 5
     # print(f'worker_count {worker_count}')
     # worker_count = 0
 
@@ -101,7 +101,7 @@ def train_human(opt):
     val_loader = DataLoader(
         val_dset,
         batch_size=1,
-        num_workers=0,
+        num_workers=worker_count,
         # pin_memory=True,
     )
 
@@ -198,7 +198,7 @@ if __name__ == '__main__':
     opt, _ = parser.parse_known_args()
 
     # common args with diferent defaults
-    parser.add_argument('--rays_per_batch', default=4096, type=int, help='how many rays per batch')
+    parser.add_argument('--rays_per_batch', default=2048, type=int, help='how many rays per batch')
     parser.add_argument('--valid_iter', type=int, default=1000, help='interval of validation')
     parser.add_argument('--max_iter', type=int, default=300000, help='total training iterations')
     parser.add_argument('--body_rays_ratio', default=0.95, type=float, help='the percentage of rays on body')

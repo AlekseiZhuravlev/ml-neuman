@@ -47,7 +47,18 @@ def optimize_pose_with_nerf(opt, cap, net, iters=1000, save_every=10):
 
 
 def main(opt):
-    _, _, test_split = neuman_helper.create_split_files(opt.scene_dir)
+    dummy_scene = neuman_helper.NeuManReader.read_scene(
+        opt.scene_dir,
+        tgt_size=None,
+        normalize=opt.normalize,
+        bkg_range_scale=opt.bkg_range_scale,
+        human_range_scale=opt.human_range_scale,
+        mask_dir=opt.mask_dir,
+        smpl_type=opt.smpl_type
+    )
+
+
+    _, _, test_split = neuman_helper.create_split_files(dummy_scene, opt.scene_dir)
     test_views = neuman_helper.read_text(test_split)
     scene = neuman_helper.NeuManReader.read_scene(
         opt.scene_dir,
@@ -111,6 +122,12 @@ if __name__ == "__main__":
     parser.add_argument('--human_range_scale', default=1.5, type=float, help='extend near/far range for human')
     parser.add_argument('--num_offset_nets', default=1, type=int, help='how many offset networks')
     parser.add_argument('--offset_scale_type', default='linear', type=str, help='no/linear/tanh')
+
+    # added these for compatibility
+    parser.add_argument('--mask_dir', default='segmentations', type=str, help='mask folder')
+    parser.add_argument('--smpl_type', default='optimized', type=str, choices=['romp', 'optimized'], help='smpl source')
+    parser.add_argument('--dilation', type=int, default=30, help='mask dilation')
+    parser.add_argument('--penalize_lpips', default=0.01, type=float, help='train with patch')
 
     opt = parser.parse_args()
     assert opt.geo_threshold == -1, 'please use auto geo_threshold'

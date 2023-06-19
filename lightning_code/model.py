@@ -106,7 +106,7 @@ class HumanNeRF(L.LightningModule):
         batch = utils.remove_first_axis(batch)
 
         # get results of human nerf
-        _, human_dirs, human_z_vals, can_pts, can_dirs, human_out = self._eval_human_samples(batch)
+        _, human_dirs, human_z_vals, can_pts, can_dirs, human_out = self.eval_human_samples(batch)
 
         # get rgb map
         fine_rgb_map, disp_map, acc_map, weights, depth_map = self.render_rgb_map(
@@ -139,7 +139,7 @@ class HumanNeRF(L.LightningModule):
         loss_dict = {l: torch.tensor(0.0, requires_grad=True, dtype=torch.float32) for l in LOSS_NAMES}
 
         # get results of human nerf
-        _, human_dirs, human_z_vals, can_pts, can_dirs, human_out = self._eval_human_samples(batch)
+        _, human_dirs, human_z_vals, can_pts, can_dirs, human_out = self.eval_human_samples(batch)
 
         # get rgb map
         fine_rgb_map, disp_map, acc_map, weights, depth_map = self.render_rgb_map(
@@ -181,17 +181,21 @@ class HumanNeRF(L.LightningModule):
                 (1.0 - batch['is_bkg'].float())
             ) * self.opt.penalize_mask
 
+        # print('capture_id', batch['cap_id'])
+
         # alpha inside smpl mesh should be 1, alpha outside smpl mesh should be 0
         if self.opt.penalize_smpl_alpha > 0:
-            loss_dict['smpl_shape_reg'] = loss_dict['smpl_shape_reg'] + \
-                                          smpl_shape_regularization.smpl_shape_regularization(
-                                              batch['verts'],
-                                              batch['faces'],
+            smpl_reg_data = smpl_shape_regularization.smpl_shape_regularization(
+                                              self.hand_model,
                                               can_pts,
                                               can_dirs,
                                               human_out,
-                                              1
+                                              self.opt
                                           )
+            loss_dict['smpl_shape_reg'] = loss_dict['smpl_shape_reg'] + \
+                                          smpl_reg_data['smpl_reg_inside'] + smpl_reg_data['smpl_reg_outside']
+
+            self.log_dict(smpl_reg_data, on_step=True, prog_bar=True, logger=True)
 
         # sharp edge loss + hard surface loss
         if self.opt.penalize_sharp_edge > 0 or self.opt.penalize_hard_surface > 0:
@@ -271,7 +275,7 @@ class HumanNeRF(L.LightningModule):
 
         # return loss
 
-    def _eval_human_samples(self, batch):
+    def eval_human_samples(self, batch):
         """
         Get output of human Nerf + offset nets, by taking a batch of rays,
          converting them to samples, warping them to canonical space,
@@ -320,16 +324,18 @@ class HumanNeRF(L.LightningModule):
         ###########################################################################################
         # Plot for debugging
         #########################################3#################################################
-
+        # human_pts_old = human_pts.clone()
+        #
+        #
         # can_pts = (Ts @ ray_utils.to_homogeneous(human_pts)[..., None])[:, :3, 0] #.reshape(human_b, human_n,
-        #                                                                            #       3)
-
-        # plot mesh as 3d point cloud
+        # #                                                                            #       3)
+        #
+        # # plot mesh as 3d point cloud
         # import matplotlib.pyplot as plt
         # from mpl_toolkits.mplot3d import Axes3D
         # fig = plt.figure()
         #
-        # human_pts = human_pts.cpu().detach().numpy()[::100, :]
+        # human_pts = human_pts.cpu().detach().numpy()[:1000, :]
         # mesh = mesh[0].cpu().detach().numpy()
         # raw_Ts = torch.inverse(raw_Ts[0]).cpu().detach().numpy()
         #
@@ -338,20 +344,20 @@ class HumanNeRF(L.LightningModule):
         # # set alpha to 0.1 for human points
         #
         # ax = fig.add_subplot(121, projection='3d')
-        # ax.scatter(human_pts[:, 0], human_pts[:, 1], human_pts[:, 2], c='r', marker='o', alpha=0.3)
+        # ax.scatter(human_pts[:, 0], human_pts[:, 1], human_pts[:, 2], c='r', marker='o', alpha=1, s=0.5)
         #
         # # ax = fig.add_subplot(112, projection='3d')
-        # ax.scatter(mesh[:, 0], mesh[:, 1], mesh[:, 2], c='b', marker='o')
+        # ax.scatter(mesh[:, 0], mesh[:, 1], mesh[:, 2], c='b', marker='o', s=0.5)
         #
         # ax.set_title('human_pts (red) and mesh (blue) in observation space')
         #
         # ax = fig.add_subplot(122, projection='3d')
-        # ax.scatter(can_mesh[:, 0], can_mesh[:, 1], can_mesh[:, 2], c='g', marker='o')
+        # ax.scatter(can_mesh[:, 0], can_mesh[:, 1], can_mesh[:, 2], c='g', marker='o', s=0.5)
         #
-        # can_pts = can_pts.cpu().detach().numpy().reshape(-1, 3)[::100, :]
+        # can_pts = can_pts.cpu().detach().numpy().reshape(-1, 3)[:1000, :]
         # print('can_pts.shape', can_pts.shape, can_pts)
         # # exit()
-        # ax.scatter(can_pts[:, 0], can_pts[:, 1], can_pts[:, 2], c='y', marker='o', alpha=0.3)
+        # ax.scatter(can_pts[:, 0], can_pts[:, 1], can_pts[:, 2], c='y', marker='o', alpha=1, s=0.5)
         #
         # ax.set_title('can_mesh (green) and can_pts (yellow) in canonical space')
         #
@@ -366,9 +372,41 @@ class HumanNeRF(L.LightningModule):
         # import pickle
         # with open('/home/azhuavlev/PycharmProjects/ml-neuman_mano/out/mesh.pkl', 'wb') as f:
         #     pickle.dump(fig, f)
+        # #
+        # # exit()
         #
-        # exit()
-
+        #
+        # plt.clf()
+        # fig = plt.gcf()
+        # ax = fig.add_subplot(111, projection='3d')
+        #
+        # import igl
+        #
+        # human_pts = human_pts_old.cpu().detach().numpy()
+        #
+        # dist_human, _, _ = igl.signed_distance(
+        #     human_pts,
+        #     mesh,
+        #     self.hand_model.faces_mano.cpu().numpy(),
+        # )
+        #
+        # import numpy as np
+        # inside_volume = dist_human < 0
+        # print(inside_volume)
+        # print('sum - before warping', sum(inside_volume), len(inside_volume))
+        #
+        # # only display points that are inside the mesh
+        # ax.scatter(human_pts[inside_volume, 0], human_pts[inside_volume, 1], human_pts[inside_volume, 2], c='red', s=0.7)
+        # ax.scatter(mesh[:, 0], mesh[:, 1], mesh[:, 2], c='black', s=0.7)
+        #
+        # import pickle
+        # with open('/home/azhuavlev/PycharmProjects/ml-neuman_mano/out/inside_volume_orig.pkl', 'wb') as f:
+        #     pickle.dump(fig, f)
+        #
+        #
+        #
+        #
+        # human_pts = human_pts_old
         ################################################################################################
 
         # get canonical points and apply offset
