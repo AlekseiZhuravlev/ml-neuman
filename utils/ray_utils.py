@@ -9,6 +9,8 @@ import igl
 from geometry.pcd_projector import PointCloudProjectorNp
 from utils.constant import DEFAULT_GEO_THRESH, PERTURB_EPSILON
 
+from utils import utils
+
 
 def shot_ray(cap, x, y):
     z = np.array([[1]])
@@ -87,7 +89,7 @@ def warp_samples_to_canonical(pts, verts, faces, T):
 
 
 def warp_samples_to_canonical_diff(pts, verts, faces, T):
-    raise Exception('Do not use old version of warp_samples_to_canonical_diff')
+    # raise Exception('Do not use old version of warp_samples_to_canonical_diff')
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -143,6 +145,24 @@ def warp_samples_to_canonical_diff(pts, verts, faces, T):
     T_interp_inv = torch.inverse(T_interp)
 
     return T_interp_inv, f_id, signed_dist
+
+
+def warp_samples_kaolin(pts, verts, T):
+    _, uvs, faces = utils.read_obj(
+        '/itet-stor/azhuavlev/net_scratch/Projects/Data/models/mano/uv_maps/MANO_UV_left.obj'
+    )
+    print('pts.type: ', type(pts))
+    print('verts.type: ', type(verts))
+    print('T.type: ', type(T))
+
+    T_interp_inv, f_id, signed_dist = warp_samples_to_canonical_diff(
+        pts.detach().cpu().numpy(),
+        verts,#.detach().cpu().numpy(),
+        faces,
+        T#.detach().cpu().numpy()
+    )
+    return T_interp_inv
+    # pass
 
 
 def warp_samples_gpu(pts, verts, T):

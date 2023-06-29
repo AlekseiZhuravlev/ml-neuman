@@ -319,61 +319,48 @@ class HumanNeRF(L.LightningModule):
         human_pts = human_pts.reshape(-1, 3)
 
         # new method
-        Ts = ray_utils.warp_samples_gpu(pts=human_pts, verts=mesh[0], T=raw_Ts[0])
+        # Ts = ray_utils.warp_samples_gpu(pts=human_pts, verts=mesh[0], T=raw_Ts[0])
+        Ts = ray_utils.warp_samples_kaolin(pts=human_pts, verts=mesh[0], T=raw_Ts[0])
 
         ###########################################################################################
         # Plot for debugging
         #########################################3#################################################
-        # human_pts_old = human_pts.clone()
+        from utils import debug_utils
+
+        _, uvs, faces = utils.read_obj(
+            '/itet-stor/azhuavlev/net_scratch/Projects/Data/models/mano/uv_maps/MANO_UV_left.obj'
+        )
+        Ts_igl, _, _ = ray_utils.warp_samples_to_canonical_diff(
+            pts.detach().cpu().numpy(),
+            verts,  # .detach().cpu().numpy(),
+            faces,
+            T  # .detach().cpu().numpy()
+        )
+        debug_utils.plot_warped_and_orig(human_pts, mesh, raw_Ts, Ts_igl, 'igl_warped')
+
+        Ts_gpu = ray_utils.warp_samples_gpu(pts=human_pts, verts=mesh[0], T=raw_Ts[0])
+        debug_utils.plot_warped_and_orig(human_pts, mesh, raw_Ts, Ts_gpu, 'cdist_warped')
+
+
+
+
+        # get square difference between the two
+        diff = Ts_igl - Ts_gpu
+        print('diff', diff.shape, diff)
+        diff = diff.reshape(diff.shape[0], -1)
+        diff = diff.norm(dim=-1)
+
+        diff = diff / Ts_igl.reshape(Ts_igl.shape[0], -1).norm(dim=-1)
+
+        print('diff', diff.shape, diff)
+        print('max diff', diff.max())
+        print('min diff', diff.min())
+        print('mean diff', diff.mean())
+        print('median diff', diff.median())
+
+
         #
-        #
-        # can_pts = (Ts @ ray_utils.to_homogeneous(human_pts)[..., None])[:, :3, 0] #.reshape(human_b, human_n,
-        # #                                                                            #       3)
-        #
-        # # plot mesh as 3d point cloud
-        # import matplotlib.pyplot as plt
-        # from mpl_toolkits.mplot3d import Axes3D
-        # fig = plt.figure()
-        #
-        # human_pts = human_pts.cpu().detach().numpy()[:1000, :]
-        # mesh = mesh[0].cpu().detach().numpy()
-        # raw_Ts = torch.inverse(raw_Ts[0]).cpu().detach().numpy()
-        #
-        # can_mesh = (raw_Ts @ ray_utils.to_homogeneous(mesh)[..., None])[:, :3, 0]
-        #
-        # # set alpha to 0.1 for human points
-        #
-        # ax = fig.add_subplot(121, projection='3d')
-        # ax.scatter(human_pts[:, 0], human_pts[:, 1], human_pts[:, 2], c='r', marker='o', alpha=1, s=0.5)
-        #
-        # # ax = fig.add_subplot(112, projection='3d')
-        # ax.scatter(mesh[:, 0], mesh[:, 1], mesh[:, 2], c='b', marker='o', s=0.5)
-        #
-        # ax.set_title('human_pts (red) and mesh (blue) in observation space')
-        #
-        # ax = fig.add_subplot(122, projection='3d')
-        # ax.scatter(can_mesh[:, 0], can_mesh[:, 1], can_mesh[:, 2], c='g', marker='o', s=0.5)
-        #
-        # can_pts = can_pts.cpu().detach().numpy().reshape(-1, 3)[:1000, :]
-        # print('can_pts.shape', can_pts.shape, can_pts)
-        # # exit()
-        # ax.scatter(can_pts[:, 0], can_pts[:, 1], can_pts[:, 2], c='y', marker='o', alpha=1, s=0.5)
-        #
-        # ax.set_title('can_mesh (green) and can_pts (yellow) in canonical space')
-        #
-        # print('human_pts.shape', human_pts.shape, human_pts)
-        # print('mesh.shape', mesh.shape, mesh)
-        #
-        # print('human_near', batch['human_near'])
-        # print('human_far', batch['human_far'])
-        # print('cap_id', batch['cap_id'])
-        #
-        # # save figure as pickle
-        # import pickle
-        # with open('/home/azhuavlev/PycharmProjects/ml-neuman_mano/out/mesh.pkl', 'wb') as f:
-        #     pickle.dump(fig, f)
-        # #
-        # # exit()
+        exit()
         #
         #
         # plt.clf()

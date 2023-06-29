@@ -36,7 +36,7 @@ class MANOCustom(smplx.MANO):
         # self.zero_pose_inside_samples = None
         # self.distances_samples_vertices = None
 
-        self.get_zero_pose_inside_samples()
+        # self.get_zero_pose_inside_samples()
 
     def get_zero_pose_inside_samples(self):
 
@@ -56,7 +56,7 @@ class MANOCustom(smplx.MANO):
 
         mesh = trimesh.Trimesh(vertices=zero_pose_verts, faces=faces[:, :3])
 
-        self.zero_pose_inside_samples = torch.tensor(trimesh.sample.volume_mesh(mesh, 10000), dtype=torch.float32)
+        self.zero_pose_inside_samples = torch.tensor(trimesh.sample.volume_mesh(mesh, 5000), dtype=torch.float32)
         self.zero_pose_vertices = zero_pose_verts
 
         self.distances_samples_vertices = torch.cdist(
