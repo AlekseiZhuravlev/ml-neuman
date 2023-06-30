@@ -63,6 +63,10 @@ class ColmapAsciiReader():
     def read_captures(cls, images_txt_path, cameras_txt_path, images_dir, tgt_size, order='default'):
         captures = []
         cameras, images_meta = cls.read_cameras_and_meta(cameras_txt_path)
+
+        print('cameras', len(cameras))
+        print('images_meta', len(images_meta))
+
         # images_meta = cls.read_images_meta(images_txt_path, images_dir)
         if order == 'default':
             keys = images_meta.keys()
@@ -102,7 +106,7 @@ class ColmapAsciiReader():
 
         # camera_ids = ['400262', '400263', '400264', '400265', '400284']
         capture_n = '0'
-        data_path = '/home/azhuavlev/Desktop/Data/InterHand_Neuman/01/'
+        data_path = '/home/azhuavlev/Desktop/Data/InterHand_Neuman/02/'
 
         with open(data_path+'mapping.json', 'r') as f:
             cam_img_mapping = json.load(f)

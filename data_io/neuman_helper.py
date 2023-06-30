@@ -442,6 +442,8 @@ class NeuManReader():
             order='video',
         )
         num_views = len(raw_scene.captures)# // 5
+
+        print('num_views', num_views)
         num_cams = 1
         counter = 0
         print(num_views, num_cams)
@@ -506,5 +508,5 @@ class NeuManReader():
         return caps, raw_scene.point_cloud, num_views, num_cams
 
 if __name__ == '__main__':
-    result = NeuManReader.read_scene('/home/azhuavlev/Desktop/Data/InterHand_Neuman/01/', tgt_size=None)
+    result = NeuManReader.read_scene('/home/azhuavlev/Desktop/Data/InterHand_Neuman/02/', tgt_size=None)
     # print(result)

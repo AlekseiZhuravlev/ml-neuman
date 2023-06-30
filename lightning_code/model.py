@@ -184,18 +184,18 @@ class HumanNeRF(L.LightningModule):
         # print('capture_id', batch['cap_id'])
 
         # alpha inside smpl mesh should be 1, alpha outside smpl mesh should be 0
-        if self.opt.penalize_smpl_alpha > 0:
-            smpl_reg_data = smpl_shape_regularization.smpl_shape_regularization(
-                                              self.hand_model,
-                                              can_pts,
-                                              can_dirs,
-                                              human_out,
-                                              self.opt
-                                          )
-            loss_dict['smpl_shape_reg'] = loss_dict['smpl_shape_reg'] + \
-                                          smpl_reg_data['smpl_reg_inside'] + smpl_reg_data['smpl_reg_outside']
-
-            self.log_dict(smpl_reg_data, on_step=True, prog_bar=True, logger=True)
+        # if self.opt.penalize_smpl_alpha > 0:
+        #     smpl_reg_data = smpl_shape_regularization.smpl_shape_regularization(
+        #                                       self.hand_model,
+        #                                       can_pts,
+        #                                       can_dirs,
+        #                                       human_out,
+        #                                       self.opt
+        #                                   )
+        #     loss_dict['smpl_shape_reg'] = loss_dict['smpl_shape_reg'] + \
+        #                                   smpl_reg_data['smpl_reg_inside'] + smpl_reg_data['smpl_reg_outside']
+        #
+        #     self.log_dict(smpl_reg_data, on_step=True, prog_bar=True, logger=True)
 
         # sharp edge loss + hard surface loss
         if self.opt.penalize_sharp_edge > 0 or self.opt.penalize_hard_surface > 0:
@@ -319,48 +319,48 @@ class HumanNeRF(L.LightningModule):
         human_pts = human_pts.reshape(-1, 3)
 
         # new method
-        # Ts = ray_utils.warp_samples_gpu(pts=human_pts, verts=mesh[0], T=raw_Ts[0])
-        Ts = ray_utils.warp_samples_kaolin(pts=human_pts, verts=mesh[0], T=raw_Ts[0])
+        Ts = ray_utils.warp_samples_gpu(pts=human_pts, verts=mesh[0], T=raw_Ts[0])
+        # Ts = ray_utils.warp_samples_kaolin(pts=human_pts, verts=mesh[0], T=raw_Ts[0])
 
         ###########################################################################################
         # Plot for debugging
         #########################################3#################################################
-        from utils import debug_utils
-
-        _, uvs, faces = utils.read_obj(
-            '/itet-stor/azhuavlev/net_scratch/Projects/Data/models/mano/uv_maps/MANO_UV_left.obj'
-        )
-        Ts_igl, _, _ = ray_utils.warp_samples_to_canonical_diff(
-            pts.detach().cpu().numpy(),
-            verts,  # .detach().cpu().numpy(),
-            faces,
-            T  # .detach().cpu().numpy()
-        )
-        debug_utils.plot_warped_and_orig(human_pts, mesh, raw_Ts, Ts_igl, 'igl_warped')
-
-        Ts_gpu = ray_utils.warp_samples_gpu(pts=human_pts, verts=mesh[0], T=raw_Ts[0])
-        debug_utils.plot_warped_and_orig(human_pts, mesh, raw_Ts, Ts_gpu, 'cdist_warped')
+        # from utils import debug_utils
+        #
+        # _, uvs, faces = utils.read_obj(
+        #     '/itet-stor/azhuavlev/net_scratch/Projects/Data/models/mano/uv_maps/MANO_UV_left.obj'
+        # )
+        # Ts_igl, _, _ = ray_utils.warp_samples_to_canonical_diff(
+        #     pts.detach().cpu().numpy(),
+        #     verts,  # .detach().cpu().numpy(),
+        #     faces,
+        #     T  # .detach().cpu().numpy()
+        # )
+        # debug_utils.plot_warped_and_orig(human_pts, mesh, raw_Ts, Ts_igl, 'igl_warped')
+        #
+        # Ts_gpu = ray_utils.warp_samples_gpu(pts=human_pts, verts=mesh[0], T=raw_Ts[0])
+        # debug_utils.plot_warped_and_orig(human_pts, mesh, raw_Ts, Ts_gpu, 'cdist_warped')
 
 
 
 
         # get square difference between the two
-        diff = Ts_igl - Ts_gpu
-        print('diff', diff.shape, diff)
-        diff = diff.reshape(diff.shape[0], -1)
-        diff = diff.norm(dim=-1)
-
-        diff = diff / Ts_igl.reshape(Ts_igl.shape[0], -1).norm(dim=-1)
-
-        print('diff', diff.shape, diff)
-        print('max diff', diff.max())
-        print('min diff', diff.min())
-        print('mean diff', diff.mean())
-        print('median diff', diff.median())
-
-
+        # diff = Ts_igl - Ts_gpu
+        # print('diff', diff.shape, diff)
+        # diff = diff.reshape(diff.shape[0], -1)
+        # diff = diff.norm(dim=-1)
         #
-        exit()
+        # diff = diff / Ts_igl.reshape(Ts_igl.shape[0], -1).norm(dim=-1)
+        #
+        # print('diff', diff.shape, diff)
+        # print('max diff', diff.max())
+        # print('min diff', diff.min())
+        # print('mean diff', diff.mean())
+        # print('median diff', diff.median())
+        #
+        #
+        # #
+        # exit()
         #
         #
         # plt.clf()

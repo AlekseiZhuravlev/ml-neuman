@@ -19,7 +19,7 @@ def clear_folder(folder):
 
 class InterhandToNeumanConverter:
     def __init__(self, basefolder, split, capture_n, pose,
-                 cameras_list, experiment_n, max_images_per_camera):
+                 cameras_list, experiment_n, max_images_per_camera, max_cameras):
         """
         :param basefolder: path to the InterHand dataset
         :param split: 'train', 'test' or 'val'
@@ -45,15 +45,17 @@ class InterhandToNeumanConverter:
         self.depths_path = self.base_folder + '/' + 'depths' + '/' + split + '/' + \
                             f"Capture{capture_n}" + '/' + pose
 
+        self.max_cameras = max_cameras
 
         if cameras_list:
             self.cameras_list = cameras_list
         else:
             self.cameras_list = [folder_name[3:] for folder_name in sorted(os.listdir(self.pose_path))]
+        self.cameras_list = self.cameras_list[:self.max_cameras]
 
         self.target_folder = '/itet-stor/azhuavlev/net_scratch/Projects/Data/InterHand_Neuman/' \
                              f'{experiment_n}'
-        # self.camera_path = self.target_folder + '/camera'
+        self.camera_path = self.target_folder + '/camera'
         self.rgb_path = self.target_folder + '/images'
         self.mano_path = self.target_folder + '/mano'
 
@@ -63,7 +65,7 @@ class InterhandToNeumanConverter:
         os.makedirs(self.target_folder, exist_ok=True)
         os.makedirs(self.rgb_path, exist_ok=True)
         os.makedirs(self.mano_path, exist_ok=True)
-        # os.makedirs(self.camera_path, exist_ok=True)
+        os.makedirs(self.camera_path, exist_ok=True)
 
         self.curr_img = 0
         self.mapping = dict()
@@ -183,11 +185,12 @@ if __name__ == '__main__':
         capture_n='0',
         pose='ROM04_LT_Occlusion',
         # frames_list_slice=slice(None, 100, None),
-        cameras_list=['400262', '400263', '400264', '400265', '400284'],
+        cameras_list=None,#['400262', '400263', '400264', '400265', '400284'],
         # val_cameras_frac=0.1,
         # max_cameras=15,
-        experiment_n='01',
-        max_images_per_camera=20,
+        experiment_n='02',
+        max_images_per_camera=1,
+        max_cameras=60
     )
     converter.copy_images()
 
