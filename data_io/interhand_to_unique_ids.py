@@ -55,7 +55,8 @@ class InterhandToNeumanConverter:
 
         self.target_folder = '/itet-stor/azhuavlev/net_scratch/Projects/Data/InterHand_Neuman/' \
                              f'{experiment_n}'
-        self.camera_path = self.target_folder + '/camera'
+
+        self.camera_path = self.target_folder + '/cameras'
         self.rgb_path = self.target_folder + '/images'
         self.mano_path = self.target_folder + '/mano'
 
@@ -75,6 +76,9 @@ class InterhandToNeumanConverter:
             self.mano_dict = json.load(f)
 
         self.max_images_per_camera = max_images_per_camera
+
+        with open(self.base_folder + '/annotations/' + self.split + '/InterHand2.6M_' + split + '_camera.json') as f:
+            self.camera_params_dict = json.load(f)
 
     def check_camera_img_count(self):
         """
@@ -121,6 +125,8 @@ class InterhandToNeumanConverter:
 
                     self.create_mano(img)
 
+                    self.create_camera(camera)
+
                 # camera_folder = self.pose_path + '/' + f'cam{camera}'
                 # img = sorted(os.listdir(camera_folder))[j_image]
                 #
@@ -153,6 +159,25 @@ class InterhandToNeumanConverter:
         mano_params = self.mano_dict[self.capture_n][img_id]
         with open(f'{self.mano_path}/{self.curr_img:05d}.json', 'w') as f:
             json.dump(mano_params, f)
+
+    def create_camera(self, camera):
+        # load camera parameters
+        campos = self.camera_params_dict[self.capture_n]['campos'][camera]
+        camrot = self.camera_params_dict[self.capture_n]['camrot'][camera]
+        focal = self.camera_params_dict[self.capture_n]['focal'][camera]
+        princpt = self.camera_params_dict[self.capture_n]['princpt'][camera]
+
+        # create camera parameters dict
+        camera_params = {
+            'camrot': camrot,
+            'campos': campos,
+            'focal': focal,
+            'princpt': princpt,
+        }
+
+        # save camera parameters to file
+        with open(f'{self.camera_path}/{self.curr_img:05d}.json', 'w') as f:
+            json.dump(camera_params, f, indent=4)
 
 
     def update_mapping(self, old_camera_id, new_camera_id, img):
@@ -188,7 +213,7 @@ if __name__ == '__main__':
         cameras_list=None,#['400262', '400263', '400264', '400265', '400284'],
         # val_cameras_frac=0.1,
         # max_cameras=15,
-        experiment_n='02',
+        experiment_n='03',
         max_images_per_camera=1,
         max_cameras=60
     )

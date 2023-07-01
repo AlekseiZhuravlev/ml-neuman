@@ -143,3 +143,66 @@ class MANOCustom(smplx.MANO):
 
         return vertices, T
 
+
+    def verts_transformations_batched(
+            self,
+            betas: Optional[Tensor] = None,
+            global_orient: Optional[Tensor] = None,
+            hand_pose: Optional[Tensor] = None,
+            transl: Optional[Tensor] = None,
+            return_verts: bool = True,
+            return_full_pose: bool = False,
+            return_tensor=True,
+            concat_joints=False,
+            **kwargs
+    ) -> MANOOutput:
+        ''' Forward pass for the MANO model
+        Same as unbatched, but will not squeeze the batch dimension of T and vertices
+        returns
+        T torch.Size([778, 4, 4])
+        vertices torch.Size([778, 3])
+        '''
+        # If no shape and pose parameters are passed along, then use the
+        # ones from the module
+        global_orient = (global_orient if global_orient is not None else
+                         self.global_orient)
+        betas = betas if betas is not None else self.betas
+        hand_pose = (hand_pose if hand_pose is not None else
+                     self.hand_pose)
+
+        if transl is None:
+            if hasattr(self, 'transl'):
+                transl = self.transl
+
+        # assert that input variables are torch tensors
+        assert isinstance(global_orient, torch.Tensor)
+        assert isinstance(betas, torch.Tensor)
+        assert isinstance(hand_pose, torch.Tensor)
+        if transl is not None:
+            assert isinstance(transl, torch.Tensor)
+
+
+        full_pose = torch.cat([global_orient, hand_pose], dim=1)
+        full_pose += self.pose_mean
+
+        L, vertices = lbs_custom(betas, full_pose, self.v_template,
+                          self.shapedirs, self.posedirs,
+                          self.J_regressor, self.parents,
+                          self.lbs_weights, dtype=self.dtype,
+                          return_T=True, concat_joints=concat_joints)
+
+        # new code
+        if transl is not None:
+            transl_4x4 = torch.eye(4, dtype=self.dtype,
+                                   device=L.device
+                                   )[None]
+            transl_4x4[0, :3, 3] = transl.unsqueeze(1)
+            T = torch.matmul(transl_4x4, L)
+        else:
+            T = L
+        if not return_tensor:
+            raise TypeError('Trying to return numpy array instead of tensor')
+            # vertices = vertices.detach().cpu().numpy()[0]
+            # T = T.detach().cpu().numpy()[0]
+
+        return vertices, T
