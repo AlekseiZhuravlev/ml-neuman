@@ -33,14 +33,16 @@ from nerf import *
 from plot_image_grid import image_grid
 import torchvision
 
-import models.mano
+import mano_pytorch3d
+
+from pytorch3d.utils.camera_conversions import cameras_from_opencv_projection
 
 
 class HandModel(L.LightningModule):
-    def __init__(self, dataset):
+    def __init__(self, dataset, nerf_model):
         super().__init__()
 
-        self.hand_model = models.mano.MANOCustom(
+        self.hand_model = mano_pytorch3d.MANOCustom(
             model_path='/home/azhuavlev/Desktop/Data/models/mano/MANO_LEFT.pkl',
             is_rhand=False,
             use_pca=False,
@@ -93,7 +95,7 @@ class HandModel(L.LightningModule):
         )
 
         # Instantiate the radiance field model.
-        self.neural_radiance_field = NeuralRadianceField()
+        self.neural_radiance_field = nerf_model
 
         self.validation_images = []
 
@@ -102,19 +104,20 @@ class HandModel(L.LightningModule):
         nears = []
         fars = []
         for element in dataset:
-            Rs, Ts, images, silhouettes, manos = element
+            camera_params, images, silhouettes, manos = element
 
-            output = self.hand_model(
+            verts = self.hand_model.forward_pytorch3d(
                 betas= manos['shape'],
                 global_orient = manos['root_pose'],
                 hand_pose = manos['hand_pose'],
-                transl = manos['trans'],
+                transl=manos['trans'],
             )
-            verts = output.vertices
 
-            camera = FoVPerspectiveCameras(
-                R=Rs,
-                T=Ts,
+            camera = cameras_from_opencv_projection(
+                element[0]['R'],
+                element[0]['t'],
+                element[0]['intrinsic_mat'],
+                element[0]['image_size'],
             )
             # calculate min and max depth from camera to hand
             depths = camera.get_world_to_view_transform().transform_points(verts)[:, :, 2:]
@@ -139,30 +142,31 @@ class HandModel(L.LightningModule):
         print('render_size_x', self.render_size_x)
         print('render_size_y', self.render_size_y)
 
+
     def configure_optimizers(self):
         # TODO lr decay
         # Instantiate the Adam optimizer. We set its master learning rate to 1e-3.
-        lr = 1e-3
-        return torch.optim.Adam(self.parameters(), lr=lr)
+        lr = 5e-3
+        return torch.optim.Adam(self.neural_radiance_field.parameters(), lr=lr)
 
 
     def training_step(self, batch, batch_idx):
 
-        Rs, Ts, images, silhouettes, manos = batch
+        camera_params, images, silhouettes, manos = batch
 
-        # Sample the minibatch of cameras.
-        batch_cameras = FoVPerspectiveCameras(
-            R=Rs,
-            T=Ts,
-            znear=self.min_depth,
-            zfar=self.max_depth,
-            device=self.device,
+        batch_cameras = cameras_from_opencv_projection(
+            camera_params['R'],
+            camera_params['t'],
+            camera_params['intrinsic_mat'],
+            camera_params['image_size'],
         )
 
         # Evaluate the nerf model.
         rendered_images_silhouettes, sampled_rays = self.renderer_mc(
             cameras=batch_cameras,
-            volumetric_function=self.neural_radiance_field
+            volumetric_function=self.neural_radiance_field,
+            vertices=manos['verts'],
+            Ts=manos['Ts']
         )
         rendered_images, rendered_silhouettes = (
             rendered_images_silhouettes.split([3, 1], dim=-1)
@@ -216,23 +220,24 @@ class HandModel(L.LightningModule):
         tensorboard_logger.add_image('model_output', grid, self.current_epoch)
 
 
-
     def visualize_batch(self, batch):
-        Rs, Ts, images, silhouettes, manos = batch
 
-        batch_cameras = FoVPerspectiveCameras(
-            R=Rs,
-            T=Ts,
-            znear=self.min_depth,
-            zfar=self.max_depth,
-            device=self.device,
+        camera_params, images, silhouettes, manos = batch
+
+        batch_cameras = cameras_from_opencv_projection(
+            camera_params['R'],
+            camera_params['t'],
+            camera_params['intrinsic_mat'],
+            camera_params['image_size'],
         )
 
         # Render using the grid renderer and the
         # batched_forward function of neural_radiance_field.
         rendered_image_silhouette, _ = self.renderer_grid(
             cameras=batch_cameras,
-            volumetric_function=self.neural_radiance_field.batched_forward
+            volumetric_function=self.neural_radiance_field.batched_forward,
+            vertices=manos['verts'],
+            Ts=manos['Ts']
         )
         # Split the rendering result to a silhouette render
         # and the image render.

@@ -30,6 +30,8 @@ from tqdm.notebook import tqdm
 from generate_cow_renders import generate_cow_renders
 from plot_image_grid import image_grid
 
+import warp_points
+
 # from .models.mano import MANOCustom
 
 
@@ -172,6 +174,10 @@ class NeuralRadianceField(torch.nn.Module):
             rays_directions, dim=-1
         )
 
+        # TODO: disabling ray directions
+        rays_directions_normed = torch.zeros_like(rays_directions_normed)
+        # print('directions disabled')
+
         # Obtain the harmonic embedding of the normalized ray directions.
         rays_embedding = self.harmonic_embedding(
             rays_directions_normed
@@ -194,6 +200,8 @@ class NeuralRadianceField(torch.nn.Module):
     def forward(
             self,
             ray_bundle: RayBundle,
+            vertices,
+            Ts,
             **kwargs,
     ):
         """
@@ -223,16 +231,11 @@ class NeuralRadianceField(torch.nn.Module):
         rays_points_world = ray_bundle_to_ray_points(ray_bundle)
         # rays_points_world.shape = [minibatch x ... x 3]
 
-        # print('rays_points_world', rays_points_world.shape, rays_points_world)
-        # plot points
-        # import matplotlib.pyplot as plt
-        # fig = plt.figure()
-        # ax = fig.add_subplot(111, projection='3d')
-        #
-        # rays_points_world = rays_points_world.reshape(-1, 3)
-        # ax.scatter(rays_points_world[:, 0], rays_points_world[:, 1], rays_points_world[:, 2], s=0.3)
-        # plt.show()
-        # exit()
+        rays_points_world = warp_points.warp_points(
+            rays_points_world,
+            vertices,
+            Ts,
+        )
 
         # For each 3D world coordinate, we obtain its harmonic embedding.
         embeds = self.harmonic_embedding(
@@ -307,7 +310,8 @@ class NeuralRadianceField(torch.nn.Module):
                     directions=ray_bundle.directions.view(-1, 3)[batch_idx],
                     lengths=ray_bundle.lengths.view(-1, n_pts_per_ray)[batch_idx],
                     xys=None,
-                )
+                ),
+                **kwargs,
             ) for batch_idx in batches
         ]
 

@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 import json
 import cv2
+import mano_pytorch3d
 
 class NeumanDataset(torch.utils.data.Dataset):
     def __init__(self, exp_dir, cap_ids):
@@ -16,39 +17,10 @@ class NeumanDataset(torch.utils.data.Dataset):
         self.load_mano()
 
 
-        # self.Rs = []
-        # self.Ts = []
-        # self.images, self.silhouettes = [], []
-        # for i in cap_ids:
-        #     self.Rs.append(self.scene.captures[i].cam_pose.rotation_matrix[0:3, 0:3])
-        #     self.Ts.append(self.scene.captures[i].cam_pose.translation_vector)
-        #
-        #     # not normalized!
-        #     self.images.append(self.scene.captures[i].image)
-        #     self.silhouettes.append(self.scene.captures[i].mask)
-        #
-        # self.Rs = torch.tensor(np.array(self.Rs))
-        # self.Ts = torch.tensor(np.array(self.Ts))
-        # self.images = torch.tensor(np.array(self.images))
-        # self.silhouettes = torch.tensor(np.array(self.silhouettes))
-        #
-        # self.images = (self.images.to(torch.float32) / 255.0).clamp(0.0, 1.0)
-        # self.silhouettes = self.silhouettes.to(torch.float32)
-        #
-        # print('R', self.Rs.shape)
-        # print('T', self.Ts.shape)
-        # print('images', self.images.shape, self.images.dtype)
-        # print('silhouettes', self.silhouettes.shape, self.silhouettes.dtype)
-
     def load_cameras(self):
         cam_path = self.exp_dir + '/cameras'
 
-        self.campos = []
-        self.camrot = []
-
-        self.Rs = []
-        self.Ts = []
-
+        self.camera_params_opencv = []
         for i in self.cap_ids:
             json_file = cam_path + f'/{i:05d}.json'
             with open(json_file) as f:
@@ -56,15 +28,27 @@ class NeumanDataset(torch.utils.data.Dataset):
 
                 campos = np.array(data['campos'], dtype=np.float32).reshape(3) / 1000.0
                 camrot = np.array(data['camrot'], dtype=np.float32).reshape(3, 3)
-
-                self.campos.append(campos)
-                self.camrot.append(camrot)
+                focal = np.array(data['focal'], dtype=np.float32).reshape(2)
+                princpt = np.array(data['princpt'], dtype=np.float32).reshape(2)
 
                 R = camrot
                 t = -np.dot(camrot, campos.reshape(3, 1)).reshape(3)  # -Rt -> t
 
-                self.Rs.append(R)
-                self.Ts.append(t)
+                intrinsic_mat = np.array([
+                    [focal[0], 0, princpt[0]],
+                    [0, focal[1], princpt[1]],
+                    [0, 0, 1]
+                ], dtype=np.float32)
+
+                # (height, width)
+                image_size = np.array([512, 334], dtype=np.float32)
+
+                self.camera_params_opencv.append({
+                    'R': R,
+                    't': t,
+                    'intrinsic_mat': intrinsic_mat,
+                    'image_size': image_size
+                })
 
     def load_images(self):
         img_path = self.exp_dir + '/images'
@@ -97,8 +81,13 @@ class NeumanDataset(torch.utils.data.Dataset):
     def load_mano(self):
         mano_path = self.exp_dir + '/mano'
 
-        self.manos = []
+        hand_model = mano_pytorch3d.MANOCustom(
+            model_path='/home/azhuavlev/Desktop/Data/models/mano/MANO_LEFT.pkl',
+            is_rhand=False,
+            use_pca=False,
+        )
 
+        self.manos = []
         for i in self.cap_ids:
             mano_file = mano_path + f'/{i:05d}.json'
             with open(mano_file) as f:
@@ -115,17 +104,26 @@ class NeumanDataset(torch.utils.data.Dataset):
             shape = torch.FloatTensor(mano['shape'])
             trans = torch.FloatTensor(mano['trans'])
 
+            vertices_py3d, Ts_xyz = hand_model.verts_transformations_pytorch3d(
+                betas=shape.unsqueeze(0),
+                global_orient=root_pose.unsqueeze(0),
+                hand_pose=hand_pose.unsqueeze(0),
+                transl=trans.unsqueeze(0)
+            )
+
             mano_dict = {
                 'root_pose': root_pose,
                 'hand_pose': hand_pose,
                 'shape': shape,
-                'trans':trans
+                'trans':trans,
+                'verts': vertices_py3d.squeeze(0),
+                'Ts': Ts_xyz.squeeze(0),
             }
-            print(mano_dict)
+            # print(mano_dict)
             self.manos.append(mano_dict)
 
     def __len__(self):
-        return len(self.Rs)
+        return len(self.camera_params_opencv)
 
     def __getitem__(self, idx):
-        return self.Rs[idx], self.Ts[idx], self.images[idx], self.silhouettes[idx], self.manos[idx]
+        return self.camera_params_opencv[idx], self.images[idx], self.silhouettes[idx], self.manos[idx]

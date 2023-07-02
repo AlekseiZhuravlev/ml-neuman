@@ -206,3 +206,24 @@ class MANOCustom(smplx.MANO):
             # T = T.detach().cpu().numpy()[0]
 
         return vertices, T
+
+    def forward_pytorch3d(self,
+                          betas,
+                          global_orient,
+                          hand_pose,
+                          transl
+                          ):
+        """
+        Same as forward, but returns vertices in PyTorch3D format
+        """
+        output =  self(
+            betas=betas,
+            global_orient=global_orient,
+            hand_pose=hand_pose,
+            transl=transl,
+        )
+        verts = output.vertices
+
+        # reverse x- and y-axis following PyTorch3D axis direction
+        return torch.stack((-verts[:, :, 0], -verts[:, :, 1], verts[:, :, 2]),
+                            2)

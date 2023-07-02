@@ -15,13 +15,13 @@ def _xavier_init(linear):
 class NeuralRadianceField(torch.nn.Module):
     def __init__(
         self,
-        n_harmonic_functions_xyz: int = 6,
-        n_harmonic_functions_dir: int = 4,
+        n_harmonic_functions_xyz: int = 30,
+        n_harmonic_functions_dir: int = 12,
         n_hidden_neurons_xyz: int = 256,
         n_hidden_neurons_dir: int = 128,
         n_layers_xyz: int = 8,
         append_xyz: Tuple[int, ...] = (5,),
-        use_multiple_streams: bool = True,
+        use_multiple_streams: bool = False,
         **kwargs,
     ):
         """
@@ -173,7 +173,7 @@ class NeuralRadianceField(torch.nn.Module):
     def forward(
         self,
         ray_bundle: RayBundle,
-        density_noise_std: float = 0.0,
+        density_noise_std: float = 0.5,
         **kwargs,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -217,6 +217,40 @@ class NeuralRadianceField(torch.nn.Module):
         rays_densities, rays_colors = self._get_densities_and_colors(
             features, ray_bundle, density_noise_std
         )
+        return rays_densities, rays_colors
+
+    def batched_forward(self,
+                        ray_bundle,
+                        n_batches: int = 16,
+                        **kwargs,
+                        ):
+        # Parse out shapes needed for tensor reshaping in this function.
+        n_pts_per_ray = ray_bundle.lengths.shape[-1]
+        spatial_size = [*ray_bundle.origins.shape[:-1], n_pts_per_ray]
+
+        # Split the rays to `n_batches` batches.
+        tot_samples = ray_bundle.origins.shape[:-1].numel()
+        batches = torch.chunk(torch.arange(tot_samples), n_batches)
+
+        # For each batch, execute the standard forward pass.
+        batch_outputs = [
+            self.forward(
+                RayBundle(
+                    origins=ray_bundle.origins.view(-1, 3)[batch_idx],
+                    directions=ray_bundle.directions.view(-1, 3)[batch_idx],
+                    lengths=ray_bundle.lengths.view(-1, n_pts_per_ray)[batch_idx],
+                    xys=None,
+                )
+            ) for batch_idx in batches
+        ]
+
+        # Concatenate the per-batch rays_densities and rays_colors
+        # and reshape according to the sizes of the inputs.
+        rays_densities, rays_colors = [
+            torch.cat(
+                [batch_output[output_i] for batch_output in batch_outputs], dim=0
+            ).view(*spatial_size, -1) for output_i in (0, 1)
+        ]
         return rays_densities, rays_colors
 
 
