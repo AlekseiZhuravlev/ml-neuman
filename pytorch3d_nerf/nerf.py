@@ -133,7 +133,10 @@ class NeuralRadianceField(torch.nn.Module):
         # ray points to values close to 0.
         # This is a crucial detail for ensuring convergence
         # of the model.
-        self.density_layer[0].bias.data[0] = -1.5
+
+        # TODO - removed this
+        # self.density_layer[0].bias.data[0] = -1.5
+        self.density_layer[0].bias.data[0] = -1.0
 
         # self.hand_model = MANOCustom(
         #     model_path='/home/azhuavlev/Desktop/Data/models/mano/MANO_LEFT.pkl',
@@ -174,8 +177,8 @@ class NeuralRadianceField(torch.nn.Module):
             rays_directions, dim=-1
         )
 
-        # TODO: disabling ray directions
-        rays_directions_normed = torch.zeros_like(rays_directions_normed)
+
+        # rays_directions_normed = torch.zeros_like(rays_directions_normed)
         # print('directions disabled')
 
         # Obtain the harmonic embedding of the normalized ray directions.

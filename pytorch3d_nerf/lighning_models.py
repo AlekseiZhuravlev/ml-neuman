@@ -34,6 +34,7 @@ from plot_image_grid import image_grid
 import torchvision
 
 import mano_pytorch3d
+import sampling_utils
 
 from pytorch3d.utils.camera_conversions import cameras_from_opencv_projection
 
@@ -53,14 +54,23 @@ class HandModel(L.LightningModule):
         # Here, NDCMultinomialRaysampler generates a rectangular image
         # grid of rays whose coordinates follow the PyTorch3D
         # coordinate conventions.
-        self.raysampler_grid = NDCMultinomialRaysampler(
+        self.raysampler_train = NDCMultinomialRaysampler(
+            image_height=self.render_size_x,
+            image_width=self.render_size_y,
+            n_rays_per_image=2048,
+            n_pts_per_ray=128,
+            min_depth=self.min_depth,
+            max_depth=self.max_depth,
+            stratified_sampling=True,
+        )
+
+        self.raysampler_test = NDCMultinomialRaysampler(
             image_height=self.render_size_x,
             image_width=self.render_size_y,
             n_pts_per_ray=32,
             min_depth=self.min_depth,
             max_depth=self.max_depth,
-            # min_depth=0.1,
-            # max_depth=2.0,
+            stratified_sampling=False,
         )
 
         # MonteCarloRaysampler generates a random subset
@@ -74,6 +84,7 @@ class HandModel(L.LightningModule):
             n_pts_per_ray=128,
             min_depth=self.min_depth,
             max_depth=self.max_depth,
+            stratified_sampling=True,
             # min_depth=0.1,
             # max_depth=2.0,
         )
@@ -87,9 +98,14 @@ class HandModel(L.LightningModule):
 
         # Finally, instantiate the implicit renders
         # for both raysamplers.
-        self.renderer_grid = ImplicitRenderer(
-            raysampler=self.raysampler_grid, raymarcher=self.raymarcher,
+        self.renderer_train = ImplicitRenderer(
+            raysampler=self.raysampler_train, raymarcher=self.raymarcher,
         )
+        self.renderer_test = ImplicitRenderer(
+            raysampler=self.raysampler_test, raymarcher=self.raymarcher,
+        )
+
+
         self.renderer_mc = ImplicitRenderer(
             raysampler=self.raysampler_mc, raymarcher=self.raymarcher,
         )
@@ -128,14 +144,14 @@ class HandModel(L.LightningModule):
         self.min_depth = min(
             min(nears),
             min(fars),
-        ) * 0.8
+        ) #* 0.8
         self.max_depth = max(
             max(nears),
             max(fars),
-        ) * 1.2
+        ) #* 1.2
 
-        self.render_size_x = images.shape[1] // 2
-        self.render_size_y = images.shape[2] // 2
+        self.render_size_x = images.shape[1] #// 2
+        self.render_size_y = images.shape[2] #// 2
 
         print('min_depth', self.min_depth)
         print('max_depth', self.max_depth)
@@ -146,7 +162,7 @@ class HandModel(L.LightningModule):
     def configure_optimizers(self):
         # TODO lr decay
         # Instantiate the Adam optimizer. We set its master learning rate to 1e-3.
-        lr = 5e-3
+        lr = 1e-3
         return torch.optim.Adam(self.neural_radiance_field.parameters(), lr=lr)
 
 
@@ -161,13 +177,34 @@ class HandModel(L.LightningModule):
             camera_params['image_size'],
         )
 
+        masks_sampling = sampling_utils.make_sampling_mask(
+            silhouettes
+        )
+
         # Evaluate the nerf model.
-        rendered_images_silhouettes, sampled_rays = self.renderer_mc(
+        rendered_images_silhouettes, sampled_rays = self.renderer_train(
             cameras=batch_cameras,
             volumetric_function=self.neural_radiance_field,
             vertices=manos['verts'],
-            Ts=manos['Ts']
+            Ts=manos['Ts'],
+            mask=masks_sampling
         )
+
+        # rendered_images_silhouettes_mc, sampled_rays_mc = self.renderer_mc(
+        #     cameras=batch_cameras,
+        #     volumetric_function=self.neural_radiance_field,
+        #     vertices=manos['verts'],
+        #     Ts=manos['Ts'],
+        #     mask=silhouettes
+        # )
+        # print('rendered_images_silhouettes', rendered_images_silhouettes)
+        # print('sampled_rays', sampled_rays)
+        #
+        # print('rendered_images_silhouettes_mc', rendered_images_silhouettes_mc)
+        # print('sampled_rays_mc', sampled_rays_mc)
+        #
+        # exit()
+
         rendered_images, rendered_silhouettes = (
             rendered_images_silhouettes.split([3, 1], dim=-1)
         )
@@ -233,11 +270,12 @@ class HandModel(L.LightningModule):
 
         # Render using the grid renderer and the
         # batched_forward function of neural_radiance_field.
-        rendered_image_silhouette, _ = self.renderer_grid(
+        rendered_image_silhouette, _ = self.renderer_test(
             cameras=batch_cameras,
             volumetric_function=self.neural_radiance_field.batched_forward,
             vertices=manos['verts'],
-            Ts=manos['Ts']
+            Ts=manos['Ts'],
+            # mask=silhouettes
         )
         # Split the rendering result to a silhouette render
         # and the image render.

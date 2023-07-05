@@ -37,7 +37,7 @@ class MANOCustom(smplx.MANO):
         ''' Forward pass for the MANO model
         Same as unbatched, but will not squeeze the batch dimension of T and vertices
         returns
-        vertices torch.Size([1, 778, 3]) - vertices in PyTorch3D format
+        vertices torch.Size([1, 778, 3]) - ZERO POSE vertices in PyTorch3D format
         T torch.Size([1, 778, 4, 4]) - !!! transformation matrices in XYZ format !!!
         '''
 

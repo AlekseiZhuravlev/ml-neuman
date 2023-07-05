@@ -104,7 +104,14 @@ class NeumanDataset(torch.utils.data.Dataset):
             shape = torch.FloatTensor(mano['shape'])
             trans = torch.FloatTensor(mano['trans'])
 
-            vertices_py3d, Ts_xyz = hand_model.verts_transformations_pytorch3d(
+            _, Ts_xyz = hand_model.verts_transformations_pytorch3d(
+                betas=shape.unsqueeze(0),
+                global_orient=root_pose.unsqueeze(0),
+                hand_pose=hand_pose.unsqueeze(0),
+                transl=trans.unsqueeze(0)
+            )
+
+            vertices_py3d = hand_model.forward_pytorch3d(
                 betas=shape.unsqueeze(0),
                 global_orient=root_pose.unsqueeze(0),
                 hand_pose=hand_pose.unsqueeze(0),

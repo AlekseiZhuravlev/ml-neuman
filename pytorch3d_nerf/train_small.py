@@ -30,7 +30,6 @@ sys.path.append("/home/azhuavlev/PycharmProjects/ml-neuman_mano")
 from data_io import neuman_helper
 from generate_cow_renders import generate_cow_renders
 from helpers import *
-from nerf import *
 from plot_image_grid import image_grid
 
 from torch.utils.data import DataLoader
@@ -40,6 +39,7 @@ import lightning as L
 from lightning.pytorch.loggers import TensorBoardLogger
 
 import nerf_original
+import nerf
 
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -68,7 +68,7 @@ if __name__ == '__main__':
     full_loader = DataLoader(full_dataset, batch_size=batch_size, shuffle=False, num_workers=5)
 
     # initialize nerf model
-    nerf = nerf_original.NeuralRadianceField()
+    nerf = nerf.NeuralRadianceField()
 
     model = lighning_models.HandModel(dataset=full_loader, nerf_model=nerf)
 
