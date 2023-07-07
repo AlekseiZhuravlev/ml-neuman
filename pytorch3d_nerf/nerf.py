@@ -133,19 +133,9 @@ class NeuralRadianceField(torch.nn.Module):
         # ray points to values close to 0.
         # This is a crucial detail for ensuring convergence
         # of the model.
-
         # TODO - removed this
         # self.density_layer[0].bias.data[0] = -1.5
         self.density_layer[0].bias.data[0] = -1.0
-
-        # self.hand_model = MANOCustom(
-        #     model_path='/home/azhuavlev/Desktop/Data/models/mano/MANO_LEFT.pkl',
-        #     is_rhand=False,
-        #     use_pca=False,
-        # )
-
-
-
 
     def _get_densities(self, features):
         """
@@ -157,7 +147,7 @@ class NeuralRadianceField(torch.nn.Module):
         raw_densities = self.density_layer(features)
         return 1 - (-raw_densities).exp()
 
-    def _get_colors(self, features, rays_directions):
+    def _get_colors(self, features, rays_directions, warp_rays):
         """
         This function takes per-point `features` predicted by `self.mlp`
         and evaluates the color model in order to attach to each
@@ -170,27 +160,27 @@ class NeuralRadianceField(torch.nn.Module):
         of point rays expressed as 3D l2-normalized vectors
         in world coordinates.
         """
-        spatial_size = features.shape[:-1]
-
         # Normalize the ray_directions to unit l2 norm.
         rays_directions_normed = torch.nn.functional.normalize(
             rays_directions, dim=-1
         )
-
-
-        # rays_directions_normed = torch.zeros_like(rays_directions_normed)
-        # print('directions disabled')
 
         # Obtain the harmonic embedding of the normalized ray directions.
         rays_embedding = self.harmonic_embedding(
             rays_directions_normed
         )
 
-        # Expand the ray directions tensor so that its spatial size
-        # is equal to the size of features.
-        rays_embedding_expand = rays_embedding[..., None, :].expand(
-            *spatial_size, rays_embedding.shape[-1]
-        )
+        # # Expand the ray directions tensor so that its spatial size
+        # # is equal to the size of features.
+        if warp_rays:
+            rays_embedding_expand = rays_embedding
+        else:
+            spatial_size = features.shape[:-1]
+            rays_embedding_expand = rays_embedding[..., None, :].expand(
+                *spatial_size, rays_embedding.shape[-1]
+            )
+        # TODO changed
+
 
         # Concatenate ray direction embeddings with
         # features and evaluate the color model.
@@ -205,6 +195,7 @@ class NeuralRadianceField(torch.nn.Module):
             ray_bundle: RayBundle,
             vertices,
             Ts,
+            warp_rays,
             **kwargs,
     ):
         """
@@ -231,14 +222,19 @@ class NeuralRadianceField(torch.nn.Module):
         """
         # We first convert the ray parametrizations to world
         # coordinates with `ray_bundle_to_ray_points`.
+
         rays_points_world = ray_bundle_to_ray_points(ray_bundle)
         # rays_points_world.shape = [minibatch x ... x 3]
 
-        rays_points_world = warp_points.warp_points(
-            rays_points_world,
-            vertices,
-            Ts,
-        )
+        if warp_rays:
+            # Warp the rays to the canonical view.
+            rays_points_world, ray_directions = warp_points.warp_points(
+                rays_points_world,
+                vertices,
+                Ts,
+            )
+        else:
+            ray_directions = ray_bundle.directions
 
         # For each 3D world coordinate, we obtain its harmonic embedding.
         embeds = self.harmonic_embedding(
@@ -256,7 +252,12 @@ class NeuralRadianceField(torch.nn.Module):
         rays_densities = self._get_densities(features)
         # rays_densities.shape = [minibatch x ... x 1]
 
-        rays_colors = self._get_colors(features, ray_bundle.directions)
+        rays_colors = self._get_colors(
+            features,
+            ray_directions,
+            warp_rays
+            # ray_bundle.directions
+        )
         # rays_colors.shape = [minibatch x ... x 3]
 
         return rays_densities, rays_colors

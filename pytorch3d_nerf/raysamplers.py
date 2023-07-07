@@ -19,7 +19,7 @@ class MonteCarloRaysamplerMasked(pytorch3d.renderer.NDCMultinomialRaysampler):
             **kwargs,
     ):
         super().__init__(*args, **kwargs)
-        self.n
+        # self.n
 
     def forward(
         self,
@@ -64,7 +64,7 @@ class MonteCarloRaysamplerMasked(pytorch3d.renderer.NDCMultinomialRaysampler):
         # get the initial grid of image xy coords
         # of shape (batch_size, n_rays_per_image, 2)
         if mask:
-            rays_xy =
+            rays_xy = None
         else:
             rays_xy = torch.cat(
                 [

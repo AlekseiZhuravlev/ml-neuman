@@ -114,6 +114,7 @@ class HandModel(L.LightningModule):
         self.neural_radiance_field = nerf_model
 
         self.validation_images = []
+        self.test_images = []
 
 
     def calculate_camera_parameters(self, dataset):
@@ -187,7 +188,8 @@ class HandModel(L.LightningModule):
             volumetric_function=self.neural_radiance_field,
             vertices=manos['verts'],
             Ts=manos['Ts'],
-            mask=masks_sampling
+            mask=masks_sampling,
+            warp_rays=True
         )
 
         # rendered_images_silhouettes_mc, sampled_rays_mc = self.renderer_mc(
@@ -245,9 +247,8 @@ class HandModel(L.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        result = self.visualize_batch(batch)
+        result = self.visualize_batch(batch, warp_rays=True, cameras_opencv=True)
         self.validation_images.append(result)
-
 
     def on_validation_epoch_end(self):
         grid = torchvision.utils.make_grid(self.validation_images, nrow=5)
@@ -256,17 +257,36 @@ class HandModel(L.LightningModule):
         tensorboard_logger = self.logger.experiment
         tensorboard_logger.add_image('model_output', grid, self.current_epoch)
 
+    def test_step(self, batch, batch_idx):
+        result = self.visualize_batch(batch, warp_rays=False, cameras_opencv=False)
+        self.test_images.append(result)
 
-    def visualize_batch(self, batch):
+    def on_test_epoch_end(self):
+        grid = torchvision.utils.make_grid(self.test_images, nrow=5)
+        # self.test_images = []
+
+        tensorboard_logger = self.logger.experiment
+        tensorboard_logger.add_image('model_output_test', grid, self.current_epoch)
+
+    def visualize_batch(self, batch, warp_rays, cameras_opencv):
 
         camera_params, images, silhouettes, manos = batch
 
-        batch_cameras = cameras_from_opencv_projection(
-            camera_params['R'],
-            camera_params['t'],
-            camera_params['intrinsic_mat'],
-            camera_params['image_size'],
-        )
+        if cameras_opencv:
+            batch_cameras = cameras_from_opencv_projection(
+                camera_params['R'],
+                camera_params['t'],
+                camera_params['intrinsic_mat'],
+                camera_params['image_size'],
+            )
+        else:
+            batch_cameras = FoVPerspectiveCameras(
+                R=camera_params['R'],
+                T=camera_params['t'],
+                znear=camera_params['znear'],
+                zfar=camera_params['zfar'],
+                device=self.device
+            )
 
         # Render using the grid renderer and the
         # batched_forward function of neural_radiance_field.
@@ -275,6 +295,7 @@ class HandModel(L.LightningModule):
             volumetric_function=self.neural_radiance_field.batched_forward,
             vertices=manos['verts'],
             Ts=manos['Ts'],
+            warp_rays=warp_rays
             # mask=silhouettes
         )
         # Split the rendering result to a silhouette render

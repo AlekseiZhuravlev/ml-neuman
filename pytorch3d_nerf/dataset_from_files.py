@@ -26,6 +26,8 @@ class NeumanDataset(torch.utils.data.Dataset):
             with open(json_file) as f:
                 data = json.load(f)
 
+                # print(data)
+
                 campos = np.array(data['campos'], dtype=np.float32).reshape(3) / 1000.0
                 camrot = np.array(data['camrot'], dtype=np.float32).reshape(3, 3)
                 focal = np.array(data['focal'], dtype=np.float32).reshape(2)
