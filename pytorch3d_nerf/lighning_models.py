@@ -73,20 +73,13 @@ class HandModel(L.LightningModule):
             stratified_sampling=False,
         )
 
-        # MonteCarloRaysampler generates a random subset
-        # of `n_rays_per_image` rays emitted from the image plane.
-        self.raysampler_mc = MonteCarloRaysampler(
-            min_x=-1.0,
-            max_x=1.0,
-            min_y=-1.0,
-            max_y=1.0,
-            n_rays_per_image=2048,
-            n_pts_per_ray=128,
-            min_depth=self.min_depth,
-            max_depth=self.max_depth,
-            stratified_sampling=True,
-            # min_depth=0.1,
-            # max_depth=2.0,
+        self.raysampler_canonical = NDCMultinomialRaysampler(
+            image_height=self.render_size_x,
+            image_width=self.render_size_y,
+            n_pts_per_ray=96,
+            min_depth=0.1,
+            max_depth=1,
+            stratified_sampling=False,
         )
 
         # 2) Instantiate the raymarcher.
@@ -104,11 +97,10 @@ class HandModel(L.LightningModule):
         self.renderer_test = ImplicitRenderer(
             raysampler=self.raysampler_test, raymarcher=self.raymarcher,
         )
-
-
-        self.renderer_mc = ImplicitRenderer(
-            raysampler=self.raysampler_mc, raymarcher=self.raymarcher,
+        self.renderer_canonical = ImplicitRenderer(
+            raysampler=self.raysampler_canonical, raymarcher=self.raymarcher,
         )
+
 
         # Instantiate the radiance field model.
         self.neural_radiance_field = nerf_model
@@ -247,7 +239,7 @@ class HandModel(L.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        result = self.visualize_batch(batch, warp_rays=True, cameras_opencv=True)
+        result = self.visualize_batch(batch, warp_rays=True, cameras_opencv=True, canonical_renderer=False)
         self.validation_images.append(result)
 
     def on_validation_epoch_end(self):
@@ -258,17 +250,17 @@ class HandModel(L.LightningModule):
         tensorboard_logger.add_image('model_output', grid, self.current_epoch)
 
     def test_step(self, batch, batch_idx):
-        result = self.visualize_batch(batch, warp_rays=False, cameras_opencv=False)
+        result = self.visualize_batch(batch, warp_rays=False, cameras_opencv=False, canonical_renderer=True)
         self.test_images.append(result)
 
     def on_test_epoch_end(self):
-        grid = torchvision.utils.make_grid(self.test_images, nrow=5)
+        grid = torchvision.utils.make_grid(self.test_images, nrow=5, padding=2, pad_value=1)
         # self.test_images = []
 
         tensorboard_logger = self.logger.experiment
         tensorboard_logger.add_image('model_output_test', grid, self.current_epoch)
 
-    def visualize_batch(self, batch, warp_rays, cameras_opencv):
+    def visualize_batch(self, batch, warp_rays, cameras_opencv, canonical_renderer):
 
         camera_params, images, silhouettes, manos = batch
 
@@ -290,14 +282,22 @@ class HandModel(L.LightningModule):
 
         # Render using the grid renderer and the
         # batched_forward function of neural_radiance_field.
-        rendered_image_silhouette, _ = self.renderer_test(
-            cameras=batch_cameras,
-            volumetric_function=self.neural_radiance_field.batched_forward,
-            vertices=manos['verts'],
-            Ts=manos['Ts'],
-            warp_rays=warp_rays
-            # mask=silhouettes
-        )
+        if canonical_renderer:
+            rendered_image_silhouette, _ = self.renderer_canonical(
+                cameras=batch_cameras,
+                volumetric_function=self.neural_radiance_field.batched_forward,
+                vertices=manos['verts'],
+                Ts=manos['Ts'],
+                warp_rays=warp_rays
+            )
+        else:
+            rendered_image_silhouette, _ = self.renderer_test(
+                cameras=batch_cameras,
+                volumetric_function=self.neural_radiance_field.batched_forward,
+                vertices=manos['verts'],
+                Ts=manos['Ts'],
+                warp_rays=warp_rays
+            )
         # Split the rendering result to a silhouette render
         # and the image render.
         rendered_image, rendered_silhouette = (

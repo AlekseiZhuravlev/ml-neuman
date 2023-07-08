@@ -15,8 +15,8 @@ def _xavier_init(linear):
 class NeuralRadianceField(torch.nn.Module):
     def __init__(
         self,
-        n_harmonic_functions_xyz: int = 30,
-        n_harmonic_functions_dir: int = 12,
+        n_harmonic_functions_xyz: int = 10,
+        n_harmonic_functions_dir: int = 4,
         n_hidden_neurons_xyz: int = 256,
         n_hidden_neurons_dir: int = 128,
         n_layers_xyz: int = 8,
@@ -68,12 +68,21 @@ class NeuralRadianceField(torch.nn.Module):
         )
         _xavier_init(self.intermediate_linear)
 
-        self.density_layer = torch.nn.Linear(n_hidden_neurons_xyz, 1)
-        _xavier_init(self.density_layer)
+        # TODO changed
+        # self.density_layer = torch.nn.Linear(n_hidden_neurons_xyz, 1)
+        self.density_layer = torch.nn.Sequential(
+            torch.nn.Linear(n_hidden_neurons_xyz, 1),
+            torch.nn.Softplus(beta=10.0),
+            # Sofplus activation ensures that the raw opacity
+            # is a non-negative number.
+        )
+        # _xavier_init(self.density_layer)
+        _xavier_init(self.density_layer[0])
 
         # Zero the bias of the density layer to avoid
         # a completely transparent initialization.
-        self.density_layer.bias.data[:] = 0.0  # fixme: Sometimes this is not enough
+        #self.density_layer.bias.data[:] = -1.0  # fixme: Sometimes this is not enough
+        self.density_layer[0].bias.data[:] = -1.0  # fixme: Sometimes this is not enough
 
         self.color_layer = torch.nn.Sequential(
             LinearWithRepeat(
@@ -98,19 +107,21 @@ class NeuralRadianceField(torch.nn.Module):
         and mapped to [0-1] range with 1 - inverse exponential of `raw_densities`.
         """
         raw_densities = self.density_layer(features)
-        deltas = torch.cat(
-            (
-                depth_values[..., 1:] - depth_values[..., :-1],
-                1e10 * torch.ones_like(depth_values[..., :1]),
-            ),
-            dim=-1,
-        )[..., None]
-        if density_noise_std > 0.0:
-            raw_densities = (
-                raw_densities + torch.randn_like(raw_densities) * density_noise_std
-            )
-        densities = 1 - (-deltas * torch.relu(raw_densities)).exp()
-        return densities
+        return 1 - (-raw_densities).exp()
+
+        # deltas = torch.cat(
+        #     (
+        #         depth_values[..., 1:] - depth_values[..., :-1],
+        #         1e10 * torch.ones_like(depth_values[..., :1]),
+        #     ),
+        #     dim=-1,
+        # )[..., None]
+        # if density_noise_std > 0.0:
+        #     raw_densities = (
+        #         raw_densities + torch.randn_like(raw_densities) * density_noise_std
+        #     )
+        # densities = 1 - (-deltas * torch.relu(raw_densities)).exp()
+        # return densities
 
     def _get_colors(
         self, features: torch.Tensor, rays_directions: torch.Tensor
@@ -173,7 +184,7 @@ class NeuralRadianceField(torch.nn.Module):
     def forward(
         self,
         ray_bundle: RayBundle,
-        density_noise_std: float = 0.5,
+        density_noise_std: float = 0.0,
         **kwargs,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
