@@ -262,6 +262,7 @@ class NeuralRadianceField(torch.nn.Module):
 
         return rays_densities, rays_colors
 
+
     def batched_forward(
             self,
             ray_bundle: RayBundle,
@@ -326,4 +327,51 @@ class NeuralRadianceField(torch.nn.Module):
                 [batch_output[output_i] for batch_output in batch_outputs], dim=0
             ).view(*spatial_size, -1) for output_i in (0, 1)
         ]
+        return rays_densities, rays_colors
+
+
+    def forward_points(
+            self,
+            points,
+            directions,
+            vertices,
+            Ts,
+            warp_rays,
+            **kwargs,
+    ):
+        if warp_rays:
+            # Warp the rays to the canonical view.
+            rays_points_world, ray_directions = warp_points.warp_points(
+                points,
+                vertices,
+                Ts,
+            )
+        else:
+            ray_directions = directions
+            rays_points_world = points
+
+        # For each 3D world coordinate, we obtain its harmonic embedding.
+        embeds = self.harmonic_embedding(
+            rays_points_world
+        )
+        # embeds.shape = [minibatch x ... x self.n_harmonic_functions*6]
+
+        # self.mlp maps each harmonic embedding to a latent feature space.
+        features = self.mlp(embeds)
+        # features.shape = [minibatch x ... x n_hidden_neurons]
+
+        # Finally, given the per-point features,
+        # execute the density and color branches.
+
+        rays_densities = self._get_densities(features)
+        # rays_densities.shape = [minibatch x ... x 1]
+
+        rays_colors = self._get_colors(
+            features,
+            ray_directions,
+            warp_rays
+            # ray_bundle.directions
+        )
+        # rays_colors.shape = [minibatch x ... x 3]
+
         return rays_densities, rays_colors

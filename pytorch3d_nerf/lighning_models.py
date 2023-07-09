@@ -137,11 +137,11 @@ class HandModel(L.LightningModule):
         self.min_depth = min(
             min(nears),
             min(fars),
-        ) #* 0.8
+        ) * 0.8
         self.max_depth = max(
             max(nears),
             max(fars),
-        ) #* 1.2
+        ) * 1.2
 
         self.render_size_x = images.shape[1] #// 2
         self.render_size_y = images.shape[2] #// 2
@@ -314,16 +314,33 @@ class HandModel(L.LightningModule):
 
         return concat_rendered
 
-    def get_nerf_output(self, camera):
-        ray_bundle = self.raysampler_canonical.forward(
-            camera,
-            min_depth = 0.1,
-            max_depth = 1,
-            n_pts_per_ray = 96,
-            stratified_sampling = False,
-        )
-        ray_densities, ray_colors = self.neural_radiance_field.batched_forward(
-            ray_bundle,
+    def get_nerf_output(self, points, directions):
+        # ray_bundle = self.raysampler_canonical.forward(
+        #     camera,
+        #     min_depth = 0.1,
+        #     max_depth = 1,
+        #     n_pts_per_ray = 96,
+        #     stratified_sampling = False,
+        # )
+        # print('ray_bundle', ray_bundle)
+
+        # from pytorch3d.renderer import (
+        #     FoVPerspectiveCameras,
+        #     NDCMultinomialRaysampler,
+        #     MonteCarloRaysampler,
+        #     EmissionAbsorptionRaymarcher,
+        #     ImplicitRenderer,
+        #     RayBundle,
+        #     ray_bundle_to_ray_points,
+        # )
+
+        # print('points', ray_bundle_to_ray_points(ray_bundle).shape)
+        # print('directions', ray_bundle.directions.shape)
+        # exit()
+
+        ray_densities, ray_colors = self.neural_radiance_field.forward_points(
+            points,
+            directions,
             vertices=None,
             Ts=None,
             warp_rays=False,
