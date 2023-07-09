@@ -38,6 +38,7 @@ import dataset_from_files
 import lighning_models
 import lightning as L
 from lightning.pytorch.loggers import TensorBoardLogger
+from lightning.pytorch.callbacks import LearningRateMonitor
 
 import nerf_original
 
@@ -52,8 +53,8 @@ if __name__ == '__main__':
 
     # use 80% of the data for training, randomize the order
     np.random.shuffle(all_ids)
-    train_ids = all_ids[:int(0.6 * len(all_ids))]
-    test_ids = all_ids[int(0.6 * len(all_ids)):]
+    train_ids = all_ids[:int(0.8 * len(all_ids))]
+    test_ids = all_ids[int(0.8 * len(all_ids)):]
     print(test_ids)
 
     train_dataset = dataset_from_files.NeumanDataset(data_path, train_ids)
@@ -78,6 +79,8 @@ if __name__ == '__main__':
     logger = TensorBoardLogger(output_dir)
     # checkpoint_callback = ModelCheckpoint(save_top_k=5, monitor="epoch", mode='max', every_n_epochs=1)
 
+    lr_monitor = LearningRateMonitor(logging_interval='step')
+
     trainer = L.Trainer(
         max_epochs=3001,
         benchmark=True,
@@ -88,6 +91,7 @@ if __name__ == '__main__':
         callbacks=[
             # checkpoint_callback,
             # stats_monitor,
+            lr_monitor,
         ],
     )
     trainer.fit(

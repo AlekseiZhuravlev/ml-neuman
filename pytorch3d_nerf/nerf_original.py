@@ -9,14 +9,15 @@ def _xavier_init(linear):
     """
     Performs the Xavier weight initialization of the linear layer `linear`.
     """
-    torch.nn.init.xavier_uniform_(linear.weight.data)
+    return
+    # torch.nn.init.xavier_uniform_(linear.weight.data)
 
 
 class NeuralRadianceField(torch.nn.Module):
     def __init__(
         self,
-        n_harmonic_functions_xyz: int = 10,
-        n_harmonic_functions_dir: int = 4,
+        n_harmonic_functions_xyz: int = 60,
+        n_harmonic_functions_dir: int = 24,
         n_hidden_neurons_xyz: int = 256,
         n_hidden_neurons_dir: int = 128,
         n_layers_xyz: int = 8,

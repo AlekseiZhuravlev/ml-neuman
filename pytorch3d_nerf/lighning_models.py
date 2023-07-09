@@ -155,8 +155,22 @@ class HandModel(L.LightningModule):
     def configure_optimizers(self):
         # TODO lr decay
         # Instantiate the Adam optimizer. We set its master learning rate to 1e-3.
-        lr = 1e-3
-        return torch.optim.Adam(self.neural_radiance_field.parameters(), lr=lr)
+        lr = 5e-4
+        optimizer = torch.optim.Adam(self.neural_radiance_field.parameters(), lr=lr)
+
+        # Following the original code, we use exponential decay of the
+        # learning rate: current_lr = base_lr * gamma ** (epoch / step_size)
+        def lr_lambda(epoch):
+            lr_scheduler_gamma = 0.1
+            lr_scheduler_step_size = 1500
+            return lr_scheduler_gamma ** (
+                    epoch / lr_scheduler_step_size
+            )
+        # The learning rate scheduling is implemented with LambdaLR PyTorch scheduler.
+        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer, lr_lambda, verbose=False
+        )
+        return [optimizer], [lr_scheduler]
 
 
     def training_step(self, batch, batch_idx):
@@ -183,21 +197,6 @@ class HandModel(L.LightningModule):
             mask=masks_sampling,
             warp_rays=True
         )
-
-        # rendered_images_silhouettes_mc, sampled_rays_mc = self.renderer_mc(
-        #     cameras=batch_cameras,
-        #     volumetric_function=self.neural_radiance_field,
-        #     vertices=manos['verts'],
-        #     Ts=manos['Ts'],
-        #     mask=silhouettes
-        # )
-        # print('rendered_images_silhouettes', rendered_images_silhouettes)
-        # print('sampled_rays', sampled_rays)
-        #
-        # print('rendered_images_silhouettes_mc', rendered_images_silhouettes_mc)
-        # print('sampled_rays_mc', sampled_rays_mc)
-        #
-        # exit()
 
         rendered_images, rendered_silhouettes = (
             rendered_images_silhouettes.split([3, 1], dim=-1)
@@ -314,5 +313,22 @@ class HandModel(L.LightningModule):
         concat_rendered = concat_rendered.permute(2, 0, 1)
 
         return concat_rendered
+
+    def get_nerf_output(self, camera):
+        ray_bundle = self.raysampler_canonical.forward(
+            camera,
+            min_depth = 0.1,
+            max_depth = 1,
+            n_pts_per_ray = 96,
+            stratified_sampling = False,
+        )
+        ray_densities, ray_colors = self.neural_radiance_field.batched_forward(
+            ray_bundle,
+            vertices=None,
+            Ts=None,
+            warp_rays=False,
+            n_batches=12
+        )
+        return ray_densities, ray_colors
 
 
