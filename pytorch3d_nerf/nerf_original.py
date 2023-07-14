@@ -3,7 +3,8 @@ from typing import Tuple
 import torch
 from pytorch3d.common.linear_with_repeat import LinearWithRepeat
 from pytorch3d.renderer import HarmonicEmbedding, ray_bundle_to_ray_points, RayBundle
-
+from mlp_with_skips import MLPWithInputSkips
+import warp_points
 
 def _xavier_init(linear):
     """
@@ -82,7 +83,6 @@ class NeuralRadianceField(torch.nn.Module):
 
         # Zero the bias of the density layer to avoid
         # a completely transparent initialization.
-        #self.density_layer.bias.data[:] = -1.0  # fixme: Sometimes this is not enough
         self.density_layer[0].bias.data[:] = -1.0  # fixme: Sometimes this is not enough
 
         self.color_layer = torch.nn.Sequential(
@@ -125,7 +125,7 @@ class NeuralRadianceField(torch.nn.Module):
         # return densities
 
     def _get_colors(
-        self, features: torch.Tensor, rays_directions: torch.Tensor
+        self, features: torch.Tensor, rays_directions: torch.Tensor, warp_rays
     ) -> torch.Tensor:
         """
         This function takes per-point `features` predicted by `self.mlp_xyz`
@@ -138,56 +138,27 @@ class NeuralRadianceField(torch.nn.Module):
         # Obtain the harmonic embedding of the normalized ray directions.
         rays_embedding = self.harmonic_embedding_dir(rays_directions_normed)
 
-        return self.color_layer((self.intermediate_linear(features), rays_embedding))
-
-    def _get_densities_and_colors(
-        self, features: torch.Tensor, ray_bundle: RayBundle, density_noise_std: float
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        The second part of the forward calculation.
-
-        Args:
-            features: the output of the common mlp (the prior part of the
-                calculation), shape
-                (minibatch x ... x self.n_hidden_neurons_xyz).
-            ray_bundle: As for forward().
-            density_noise_std:  As for forward().
-
-        Returns:
-            rays_densities: A tensor of shape `(minibatch, ..., num_points_per_ray, 1)`
-                denoting the opacity of each ray point.
-            rays_colors: A tensor of shape `(minibatch, ..., num_points_per_ray, 3)`
-                denoting the color of each ray point.
-        """
-        if self.use_multiple_streams and features.is_cuda:
-            current_stream = torch.cuda.current_stream(features.device)
-            other_stream = torch.cuda.Stream(features.device)
-            other_stream.wait_stream(current_stream)
-
-            with torch.cuda.stream(other_stream):
-                rays_densities = self._get_densities(
-                    features, ray_bundle.lengths, density_noise_std
-                )
-                # rays_densities.shape = [minibatch x ... x 1] in [0-1]
-
-            rays_colors = self._get_colors(features, ray_bundle.directions)
-            # rays_colors.shape = [minibatch x ... x 3] in [0-1]
-
-            current_stream.wait_stream(other_stream)
+        if warp_rays:
+            rays_embedding_expand = rays_embedding
         else:
-            # Same calculation as above, just serial.
-            rays_densities = self._get_densities(
-                features, ray_bundle.lengths, density_noise_std
+            spatial_size = features.shape[:-1]
+            rays_embedding_expand = rays_embedding[..., None, :].expand(
+                *spatial_size, rays_embedding.shape[-1]
             )
-            rays_colors = self._get_colors(features, ray_bundle.directions)
-        return rays_densities, rays_colors
+
+        # color_layer_input = torch.cat(
+        #     (features, rays_embedding_expand),
+        #     dim=-1
+        # )
+        # return self.color_layer(color_layer_input)
+        return self.color_layer((self.intermediate_linear(features), rays_embedding_expand))
 
     def forward(
         self,
         ray_bundle: RayBundle,
-        # vertices,
-        # Ts,
-        # warp_rays,
+        vertices,
+        Ts,
+        warp_rays,
         density_noise_std: float = 0.0,
         **kwargs,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -219,7 +190,16 @@ class NeuralRadianceField(torch.nn.Module):
         # We first convert the ray parametrizations to world
         # coordinates with `ray_bundle_to_ray_points`.
         rays_points_world = ray_bundle_to_ray_points(ray_bundle)
-        # rays_points_world.shape = [minibatch x ... x 3]
+
+        if warp_rays:
+            # Warp the rays to the canonical view.
+            rays_points_world, ray_directions = warp_points.warp_points(
+                rays_points_world,
+                vertices,
+                Ts,
+            )
+        else:
+            ray_directions = ray_bundle.directions
 
         # For each 3D world coordinate, we obtain its harmonic embedding.
         embeds_xyz = self.harmonic_embedding_xyz(rays_points_world)
@@ -229,9 +209,11 @@ class NeuralRadianceField(torch.nn.Module):
         features = self.mlp_xyz(embeds_xyz, embeds_xyz)
         # features.shape = [minibatch x ... x self.n_hidden_neurons_xyz]
 
-        rays_densities, rays_colors = self._get_densities_and_colors(
-            features, ray_bundle, density_noise_std
+        rays_densities = self._get_densities(
+            features, ray_bundle.lengths, density_noise_std
         )
+        rays_colors = self._get_colors(features, ray_directions, warp_rays)
+
         return rays_densities, rays_colors
 
     def batched_forward(self,
@@ -255,7 +237,8 @@ class NeuralRadianceField(torch.nn.Module):
                     directions=ray_bundle.directions.view(-1, 3)[batch_idx],
                     lengths=ray_bundle.lengths.view(-1, n_pts_per_ray)[batch_idx],
                     xys=None,
-                )
+                ),
+                **kwargs,
             ) for batch_idx in batches
         ]
 
@@ -289,102 +272,17 @@ class NeuralRadianceField(torch.nn.Module):
             rays_points_world = points
 
         # For each 3D world coordinate, we obtain its harmonic embedding.
-        embeds = self.harmonic_embedding(
-            rays_points_world
-        )
-        # embeds.shape = [minibatch x ... x self.n_harmonic_functions*6]
+        embeds_xyz = self.harmonic_embedding_xyz(rays_points_world)
+        # embeds_xyz.shape = [minibatch x ... x self.n_harmonic_functions*6 + 3]
 
         # self.mlp maps each harmonic embedding to a latent feature space.
-        features = self.mlp(embeds)
-        # features.shape = [minibatch x ... x n_hidden_neurons]
+        features = self.mlp_xyz(embeds_xyz, embeds_xyz)
+        # features.shape = [minibatch x ... x self.n_hidden_neurons_xyz]
 
-        # Finally, given the per-point features,
-        # execute the density and color branches.
-
-        rays_densities = self._get_densities(features)
-        # rays_densities.shape = [minibatch x ... x 1]
-
-        rays_colors = self._get_colors(
-            features,
-            ray_directions,
-            warp_rays
-            # ray_bundle.directions
+        rays_densities = self._get_densities(
+            features, ray_bundle.lengths, density_noise_std
         )
-        # rays_colors.shape = [minibatch x ... x 3]
+        # TODO this should warp rays as well
+        rays_colors = self._get_colors(features, ray_directions, warp_rays)
 
         return rays_densities, rays_colors
-
-
-class MLPWithInputSkips(torch.nn.Module):
-    """
-    Implements the multi-layer perceptron architecture of the Neural Radiance Field.
-
-    As such, `MLPWithInputSkips` is a multi layer perceptron consisting
-    of a sequence of linear layers with ReLU activations.
-
-    Additionally, for a set of predefined layers `input_skips`, the forward pass
-    appends a skip tensor `z` to the output of the preceding layer.
-
-    Note that this follows the architecture described in the Supplementary
-    Material (Fig. 7) of [1].
-
-    References:
-        [1] Ben Mildenhall and Pratul P. Srinivasan and Matthew Tancik
-            and Jonathan T. Barron and Ravi Ramamoorthi and Ren Ng:
-            NeRF: Representing Scenes as Neural Radiance Fields for View
-            Synthesis, ECCV2020
-    """
-
-    def __init__(
-        self,
-        n_layers: int,
-        input_dim: int,
-        output_dim: int,
-        skip_dim: int,
-        hidden_dim: int,
-        input_skips: Tuple[int, ...] = (),
-    ):
-        """
-        Args:
-            n_layers: The number of linear layers of the MLP.
-            input_dim: The number of channels of the input tensor.
-            output_dim: The number of channels of the output.
-            skip_dim: The number of channels of the tensor `z` appended when
-                evaluating the skip layers.
-            hidden_dim: The number of hidden units of the MLP.
-            input_skips: The list of layer indices at which we append the skip
-                tensor `z`.
-        """
-        super().__init__()
-        layers = []
-        for layeri in range(n_layers):
-            if layeri == 0:
-                dimin = input_dim
-                dimout = hidden_dim
-            elif layeri in input_skips:
-                dimin = hidden_dim + skip_dim
-                dimout = hidden_dim
-            else:
-                dimin = hidden_dim
-                dimout = hidden_dim
-            linear = torch.nn.Linear(dimin, dimout)
-            _xavier_init(linear)
-            layers.append(torch.nn.Sequential(linear, torch.nn.ReLU(True)))
-        self.mlp = torch.nn.ModuleList(layers)
-        self._input_skips = set(input_skips)
-
-    def forward(self, x: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: The input tensor of shape `(..., input_dim)`.
-            z: The input skip tensor of shape `(..., skip_dim)` which is appended
-                to layers whose indices are specified by `input_skips`.
-        Returns:
-            y: The output tensor of shape `(..., output_dim)`.
-        """
-        y = x
-        for li, layer in enumerate(self.mlp):
-            if li in self._input_skips:
-                y = torch.cat((y, z), dim=-1)
-            y = layer(y)
-        return y

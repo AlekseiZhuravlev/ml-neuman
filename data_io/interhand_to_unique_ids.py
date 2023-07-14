@@ -213,9 +213,9 @@ if __name__ == '__main__':
         cameras_list=None,#['400262', '400263', '400264', '400265', '400284'],
         # val_cameras_frac=0.1,
         # max_cameras=15,
-        experiment_n='03',
+        experiment_n='04',
         max_images_per_camera=1,
-        max_cameras=60
+        max_cameras=1
     )
     converter.copy_images()
 

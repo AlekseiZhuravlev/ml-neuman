@@ -41,6 +41,8 @@ from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.callbacks import LearningRateMonitor
 
 import nerf_original
+import nerf_models.nerf_big_no_warp as nerf_no_warp
+import datasets.dataset_single_image as dataset_single_image
 
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -53,31 +55,35 @@ if __name__ == '__main__':
 
     # use 80% of the data for training, randomize the order
     np.random.shuffle(all_ids)
-    train_ids = all_ids[:int(0.8 * len(all_ids))]
-    test_ids = all_ids[int(0.8 * len(all_ids)):]
+    train_ids = all_ids[:int(0.7 * len(all_ids))]
+    test_ids = all_ids[int(0.7 * len(all_ids)):]
     print(test_ids)
+
+    # We sample 1 random camera in a minibatch.
+    batch_size = 1
+
+    # # Use dataset of single image for debugging
+    # full_dataset = dataset_single_image.NeumanDataset(data_path, all_ids)
+    # train_loader = DataLoader(full_dataset, batch_size=batch_size, shuffle=True, num_workers=5)
+    # test_loader = DataLoader(full_dataset, batch_size=batch_size, shuffle=False, num_workers=5)
+    # full_loader = DataLoader(full_dataset, batch_size=batch_size, shuffle=False, num_workers=5)
 
     train_dataset = dataset_from_files.NeumanDataset(data_path, train_ids)
     test_dataset = dataset_from_files.NeumanDataset(data_path, test_ids)
     full_dataset = dataset_from_files.NeumanDataset(data_path, all_ids)
-
-    # We sample 6 random cameras in a minibatch.
-    batch_size = 1
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=5)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=5)
     full_loader = DataLoader(full_dataset, batch_size=batch_size, shuffle=False, num_workers=5)
 
     # initialize nerf model
-    nerf = nerf_original.NeuralRadianceField()
+    # nerf = nerf_original.NeuralRadianceField()
+    nerf = nerf_no_warp.NeuralRadianceField()
 
     model = lighning_models.HandModel(dataset=full_loader, nerf_model=nerf)
 
-    # print(model.raysampler_mc.min_depth)
-
     output_dir = '/home/azhuavlev/Desktop/Results/neuman_custom/'
-    logger = TensorBoardLogger(output_dir)
-    # checkpoint_callback = ModelCheckpoint(save_top_k=5, monitor="epoch", mode='max', every_n_epochs=1)
+    logger = TensorBoardLogger(output_dir, version='big_sil_loss_mask_500_sampling_0.1_no_lr_decay')
 
     lr_monitor = LearningRateMonitor(logging_interval='step')
 
@@ -86,11 +92,9 @@ if __name__ == '__main__':
         benchmark=True,
         logger=logger,
         default_root_dir=output_dir,
-        check_val_every_n_epoch=50,
+        check_val_every_n_epoch=200,
         log_every_n_steps=25,
         callbacks=[
-            # checkpoint_callback,
-            # stats_monitor,
             lr_monitor,
         ],
     )

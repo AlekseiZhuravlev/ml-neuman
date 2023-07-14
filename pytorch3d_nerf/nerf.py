@@ -181,7 +181,6 @@ class NeuralRadianceField(torch.nn.Module):
             )
         # TODO changed
 
-
         # Concatenate ray direction embeddings with
         # features and evaluate the color model.
         color_layer_input = torch.cat(

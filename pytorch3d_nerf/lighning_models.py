@@ -43,6 +43,9 @@ class HandModel(L.LightningModule):
     def __init__(self, dataset, nerf_model):
         super().__init__()
 
+        self.sil_loss_epochs = 500
+        self.sil_loss_start_factor = 0.1
+
         self.hand_model = mano_pytorch3d.MANOCustom(
             model_path='/home/azhuavlev/Desktop/Data/models/mano/MANO_LEFT.pkl',
             is_rhand=False,
@@ -214,6 +217,13 @@ class HandModel(L.LightningModule):
             rendered_silhouettes,
             silhouettes_at_rays,
         ).abs().mean()
+
+        self.log('sil_loss_unconstrained', sil_err, prog_bar=True, logger=True)
+
+        # decrease silhouette loss and update the factor
+        sil_loss_factor = self.sil_loss_start_factor * max(0, 1 - (self.current_epoch / self.sil_loss_epochs))
+        sil_err = sil_err * sil_loss_factor
+
 
         # Compute the color error as the mean huber
         # loss between the rendered colors and the
