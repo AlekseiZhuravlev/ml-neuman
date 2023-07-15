@@ -36,6 +36,8 @@ import torchvision
 import mano_pytorch3d
 import sampling_utils
 
+import torch.functional as F
+
 from pytorch3d.utils.camera_conversions import cameras_from_opencv_projection
 
 
@@ -43,7 +45,7 @@ class HandModel(L.LightningModule):
     def __init__(self, dataset, nerf_model):
         super().__init__()
 
-        self.sil_loss_epochs = 500
+        self.sil_loss_epochs = 1000
         self.sil_loss_start_factor = 0.1
 
         self.hand_model = mano_pytorch3d.MANOCustom(
@@ -60,13 +62,16 @@ class HandModel(L.LightningModule):
         self.raysampler_train = NDCMultinomialRaysampler(
             image_height=self.render_size_x,
             image_width=self.render_size_y,
-            n_rays_per_image=2048,
-            n_pts_per_ray=128,
-            min_depth=self.min_depth,
-            max_depth=self.max_depth,
+            n_rays_per_image=4096,
+            n_pts_per_ray=64,
+            # min_depth=self.min_depth,
+            # max_depth=self.max_depth,
+            min_depth=0.1,
+            max_depth=1,
             stratified_sampling=True,
-        )
 
+        )
+        # TODO what is min_depth for test?
         self.raysampler_test = NDCMultinomialRaysampler(
             image_height=self.render_size_x,
             image_width=self.render_size_y,
@@ -110,6 +115,8 @@ class HandModel(L.LightningModule):
 
         self.validation_images = []
         self.test_images = []
+
+        self.mae_loss = nn.L1Loss()
 
 
     def calculate_camera_parameters(self, dataset):
@@ -165,7 +172,7 @@ class HandModel(L.LightningModule):
         # learning rate: current_lr = base_lr * gamma ** (epoch / step_size)
         def lr_lambda(epoch):
             lr_scheduler_gamma = 0.1
-            lr_scheduler_step_size = 1500
+            lr_scheduler_step_size = 2000
             return lr_scheduler_gamma ** (
                     epoch / lr_scheduler_step_size
             )
@@ -187,6 +194,20 @@ class HandModel(L.LightningModule):
             camera_params['image_size'],
         )
 
+        print(batch_cameras[0])
+        exit(0)
+
+
+
+        depths = batch_cameras.get_world_to_view_transform().transform_points(
+            manos['verts']
+        )[:, :, 2:]
+
+        min_depth = depths.min() * 0.95
+        max_depth = depths.max() * 1.05
+
+        # print('min_depth', min_depth, 'max_depth', max_depth)
+
         masks_sampling = sampling_utils.make_sampling_mask(
             silhouettes
         )
@@ -198,7 +219,9 @@ class HandModel(L.LightningModule):
             vertices=manos['verts'],
             Ts=manos['Ts'],
             mask=masks_sampling,
-            warp_rays=True
+            warp_rays=True,
+            min_depth=min_depth,
+            max_depth=max_depth,
         )
 
         rendered_images, rendered_silhouettes = (
@@ -213,15 +236,22 @@ class HandModel(L.LightningModule):
             silhouettes.unsqueeze(-1),
             sampled_rays.xys
         )
-        sil_err = huber(
+        # sil_err = huber(
+        #     rendered_silhouettes,
+        #     silhouettes_at_rays,
+        # ).abs().mean()
+        sil_err = self.mae_loss(
             rendered_silhouettes,
             silhouettes_at_rays,
-        ).abs().mean()
+        )
 
         self.log('sil_loss_unconstrained', sil_err, prog_bar=True, logger=True)
 
         # decrease silhouette loss and update the factor
-        sil_loss_factor = self.sil_loss_start_factor * max(0, 1 - (self.current_epoch / self.sil_loss_epochs))
+        if self.sil_loss_epochs > 0:
+            sil_loss_factor = self.sil_loss_start_factor * max(0, 1 - (self.current_epoch / self.sil_loss_epochs))
+        else:
+            sil_loss_factor = 0
         sil_err = sil_err * sil_loss_factor
 
 
@@ -233,10 +263,15 @@ class HandModel(L.LightningModule):
             images,
             sampled_rays.xys
         )
-        color_err = huber(
+        # color_err = huber(
+        #     rendered_images,
+        #     colors_at_rays,
+        # ).abs().mean()
+        # calculate color error as MSE
+        color_err = self.mae_loss(
             rendered_images,
             colors_at_rays,
-        ).abs().mean()
+        )
 
         # Log the errors.
         self.log('color_loss', color_err, prog_bar=True, logger=True)

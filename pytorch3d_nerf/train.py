@@ -44,6 +44,8 @@ import nerf_original
 import nerf_models.nerf_big_no_warp as nerf_no_warp
 import datasets.dataset_single_image as dataset_single_image
 
+from lightning.pytorch.strategies import DDPStrategy
+
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -57,6 +59,8 @@ if __name__ == '__main__':
     np.random.shuffle(all_ids)
     train_ids = all_ids[:int(0.7 * len(all_ids))]
     test_ids = all_ids[int(0.7 * len(all_ids)):]
+    # train_ids = all_ids[:10]
+    # test_ids = all_ids[10:]
     print(test_ids)
 
     # We sample 1 random camera in a minibatch.
@@ -83,25 +87,27 @@ if __name__ == '__main__':
     model = lighning_models.HandModel(dataset=full_loader, nerf_model=nerf)
 
     output_dir = '/home/azhuavlev/Desktop/Results/neuman_custom/'
-    logger = TensorBoardLogger(output_dir, version='big_sil_loss_mask_500_sampling_0.1_no_lr_decay')
+    logger = TensorBoardLogger(output_dir, version='big_sil_loss_1000_mask_0.05_dilation_50_sampling_8192_32_depth_105_mae_mask_mae')
 
     lr_monitor = LearningRateMonitor(logging_interval='step')
 
     trainer = L.Trainer(
-        max_epochs=3001,
+        max_epochs=2001,
         benchmark=True,
         logger=logger,
         default_root_dir=output_dir,
         check_val_every_n_epoch=200,
-        log_every_n_steps=25,
+        log_every_n_steps=15,
+        #TODO changed
         callbacks=[
             lr_monitor,
         ],
+        strategy=DDPStrategy(find_unused_parameters=True),
     )
     trainer.fit(
         model,
         train_loader,
-        full_loader,
+        # full_loader,
         # ckpt_path='/home/azhuavlev/Desktop/Results/neuman_custom/lightning_logs/version_13/checkpoints/epoch=999-step=48000.ckpt'
     )
 

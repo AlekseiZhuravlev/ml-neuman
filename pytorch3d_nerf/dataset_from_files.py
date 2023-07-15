@@ -5,6 +5,8 @@ import numpy as np
 import json
 import cv2
 import mano_pytorch3d
+from scipy import ndimage
+
 
 class NeumanDataset(torch.utils.data.Dataset):
     def __init__(self, exp_dir, cap_ids):
@@ -49,7 +51,10 @@ class NeumanDataset(torch.utils.data.Dataset):
                     'R': R,
                     't': t,
                     'intrinsic_mat': intrinsic_mat,
-                    'image_size': image_size
+                    'image_size': image_size,
+                    'focal': focal,
+                    'princpt': princpt,
+                    'campos': campos
                 })
 
     def load_images(self):
@@ -78,7 +83,13 @@ class NeumanDataset(torch.utils.data.Dataset):
             sil = 1.0 - sil
             sil = sil.clip(0.0, 1.0)
 
-            self.silhouettes.append(sil)
+            # TODO added dilation
+            # mask_dilated_5 = ndimage.binary_dilation(mask, iterations=5) - mask.numpy()
+            sil_dilated_10 = ndimage.binary_dilation(sil, iterations=50).astype(np.float32).clip(0.0, 1.0)
+
+            self.silhouettes.append(
+                sil_dilated_10
+            )
 
     def load_mano(self):
         mano_path = self.exp_dir + '/mano'

@@ -237,8 +237,20 @@ class NeuralRadianceField(torch.nn.Module):
                         **kwargs,
                         ):
         # Parse out shapes needed for tensor reshaping in this function.
+        # ray_bundle = ray_bundle.to(torch.device('cpu'))
+
         n_pts_per_ray = ray_bundle.lengths.shape[-1]
         spatial_size = [*ray_bundle.origins.shape[:-1], n_pts_per_ray]
+        # print('ray_bundle', ray_bundle)
+        # print('spatial_size', spatial_size)
+        total_n_rays = ray_bundle.origins.numel() * n_pts_per_ray
+        # max_batch_size = 1
+        # print('ray_bundle.origins.shape', ray_bundle.origins.shape)
+        # print('total_n_rays', total_n_rays)
+        # n_batches = total_n_rays // (2048 * 128)
+        # print('n_batches', n_batches)
+
+        # exit()
 
         # Split the rays to `n_batches` batches.
         tot_samples = ray_bundle.origins.shape[:-1].numel()
