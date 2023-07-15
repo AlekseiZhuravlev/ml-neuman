@@ -23,7 +23,8 @@ import lightning as L
 
 class MANOCustom(smplx.MANO):
     def __init__(self, **kwargs):
-        super(MANOCustom, self).__init__(flat_hand_mean=True, **kwargs)
+        # keep flat_hand_mean=False, in images it is the only way
+        super(MANOCustom, self).__init__(flat_hand_mean=False, **kwargs)
 
 
     def verts_transformations_pytorch3d(
