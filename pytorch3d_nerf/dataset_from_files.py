@@ -6,6 +6,8 @@ import json
 import cv2
 import mano_pytorch3d
 from scipy import ndimage
+from pytorch3d.transforms.so3 import so3_exponential_map, so3_log_map
+
 
 
 class NeumanDataset(torch.utils.data.Dataset):
@@ -24,6 +26,7 @@ class NeumanDataset(torch.utils.data.Dataset):
 
         self.camera_params_opencv = []
         for i in self.cap_ids:
+            print('camera', i)
             json_file = cam_path + f'/{i:05d}.json'
             with open(json_file) as f:
                 data = json.load(f)
@@ -38,6 +41,18 @@ class NeumanDataset(torch.utils.data.Dataset):
                 R = camrot
                 t = -np.dot(camrot, campos.reshape(3, 1)).reshape(3)  # -Rt -> t
 
+                # convert rotation matrix to rotation vector and flip the sign of x and y
+                R = torch.tensor(R).unsqueeze(0)
+                rot_vec = so3_log_map(R)
+                rot_vec[:, :2] *= -1
+
+                # convert back to rotation matrix
+                R_pytorch3d = so3_exponential_map(rot_vec).squeeze(0).transpose(1, 0)
+
+                # flip the sign of x and y for translation vector
+                t_pytorch3d = t.copy()
+                t_pytorch3d[:2] *= -1
+
                 intrinsic_mat = np.array([
                     [focal[0], 0, princpt[0]],
                     [0, focal[1], princpt[1]],
@@ -48,8 +63,8 @@ class NeumanDataset(torch.utils.data.Dataset):
                 image_size = np.array([512, 334], dtype=np.float32)
 
                 self.camera_params_opencv.append({
-                    'R': R,
-                    't': t,
+                    'R_pytorch3d': R_pytorch3d,
+                    't_pytorch3d': t_pytorch3d,
                     'intrinsic_mat': intrinsic_mat,
                     'image_size': image_size,
                     'focal': focal,
@@ -63,6 +78,7 @@ class NeumanDataset(torch.utils.data.Dataset):
         self.images = []
 
         for i in self.cap_ids:
+            print('image', i)
             img_file = img_path + f'/{i:05d}.png'
             img = cv2.imread(img_file)
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -75,6 +91,7 @@ class NeumanDataset(torch.utils.data.Dataset):
         self.silhouettes = []
 
         for i in self.cap_ids:
+            print('silhouette', i)
             sil_file = sil_path + f'/{i:05d}.png'
             sil = cv2.imread(sil_file, cv2.IMREAD_GRAYSCALE)
             sil = sil.astype(np.float32) / 255.0
@@ -102,6 +119,7 @@ class NeumanDataset(torch.utils.data.Dataset):
 
         self.manos = []
         for i in self.cap_ids:
+            print('mano', i, '')
             mano_file = mano_path + f'/{i:05d}.json'
             with open(mano_file) as f:
                 mano = json.load(f)['left']
