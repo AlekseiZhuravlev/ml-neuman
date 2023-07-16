@@ -26,12 +26,9 @@ class NeumanDataset(torch.utils.data.Dataset):
 
         self.camera_params_opencv = []
         for i in self.cap_ids:
-            print('camera', i)
             json_file = cam_path + f'/{i:05d}.json'
             with open(json_file) as f:
                 data = json.load(f)
-
-                # print(data)
 
                 campos = np.array(data['campos'], dtype=np.float32).reshape(3) / 1000.0
                 camrot = np.array(data['camrot'], dtype=np.float32).reshape(3, 3)
@@ -53,6 +50,22 @@ class NeumanDataset(torch.utils.data.Dataset):
                 t_pytorch3d = t.copy()
                 t_pytorch3d[:2] *= -1
 
+                # R = torch.tensor(R).unsqueeze(0)
+                #
+                # rot_vec = so3_log_map(R)
+                # rot_vec_adj = rot_vec.clone()
+                # rot_vec_adj[:, :2] *= -1
+                #
+                # R = so3_exponential_map(rot_vec_adj)
+                # R = R.squeeze(0).numpy()
+                #
+                # R_pytorch3d = R.copy().transpose(1, 0)
+                # T_pytorch3d = t.copy()
+                # T_pytorch3d[:2] *= -1
+                #
+                # R_pytorch3d = torch.tensor(R_pytorch3d)#.unsqueeze(0)
+                # t_pytorch3d = torch.tensor(T_pytorch3d)#.unsqueeze(0)
+
                 intrinsic_mat = np.array([
                     [focal[0], 0, princpt[0]],
                     [0, focal[1], princpt[1]],
@@ -60,7 +73,7 @@ class NeumanDataset(torch.utils.data.Dataset):
                 ], dtype=np.float32)
 
                 # (height, width)
-                image_size = np.array([512, 334], dtype=np.float32)
+                image_size = np.array([512.0, 334.0], dtype=np.float32)
 
                 self.camera_params_opencv.append({
                     'R_pytorch3d': R_pytorch3d,
@@ -71,14 +84,13 @@ class NeumanDataset(torch.utils.data.Dataset):
                     'princpt': princpt,
                     'campos': campos
                 })
-
+#
     def load_images(self):
         img_path = self.exp_dir + '/images'
 
         self.images = []
 
         for i in self.cap_ids:
-            print('image', i)
             img_file = img_path + f'/{i:05d}.png'
             img = cv2.imread(img_file)
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -91,7 +103,6 @@ class NeumanDataset(torch.utils.data.Dataset):
         self.silhouettes = []
 
         for i in self.cap_ids:
-            print('silhouette', i)
             sil_file = sil_path + f'/{i:05d}.png'
             sil = cv2.imread(sil_file, cv2.IMREAD_GRAYSCALE)
             sil = sil.astype(np.float32) / 255.0
@@ -102,7 +113,7 @@ class NeumanDataset(torch.utils.data.Dataset):
 
             # TODO added dilation
             # mask_dilated_5 = ndimage.binary_dilation(mask, iterations=5) - mask.numpy()
-            sil_dilated_10 = ndimage.binary_dilation(sil, iterations=50).astype(np.float32).clip(0.0, 1.0)
+            sil_dilated_10 = ndimage.binary_dilation(sil, iterations=10).astype(np.float32).clip(0.0, 1.0)
 
             self.silhouettes.append(
                 sil_dilated_10
@@ -119,21 +130,20 @@ class NeumanDataset(torch.utils.data.Dataset):
 
         self.manos = []
         for i in self.cap_ids:
-            print('mano', i, '')
             mano_file = mano_path + f'/{i:05d}.json'
             with open(mano_file) as f:
                 mano = json.load(f)['left']
 
             # get mano pose and reshape it
-            mano_pose = torch.FloatTensor(mano['pose']).view(-1, 3)
+            mano_pose = torch.tensor(mano['pose'], dtype=torch.float32).view(-1, 3)
 
             # root pose is at position 0, pose of rest of the hand is at positions [1:]
             root_pose = mano_pose[0]
             hand_pose = mano_pose[1:, :].view(-1)
 
             # get betas (called shapes here) and translation vector
-            shape = torch.FloatTensor(mano['shape'])
-            trans = torch.FloatTensor(mano['trans'])
+            shape = torch.tensor(mano['shape'], dtype=torch.float32)
+            trans = torch.tensor(mano['trans'], dtype=torch.float32)
 
             _, Ts_xyz = hand_model.verts_transformations_pytorch3d(
                 betas=shape.unsqueeze(0),
@@ -157,7 +167,6 @@ class NeumanDataset(torch.utils.data.Dataset):
                 'verts': vertices_py3d.squeeze(0),
                 'Ts': Ts_xyz.squeeze(0),
             }
-            # print(mano_dict)
             self.manos.append(mano_dict)
 
     def __len__(self):

@@ -26,6 +26,10 @@ class MANOCustom(smplx.MANO):
         # keep flat_hand_mean=False, in images it is the only way
         super(MANOCustom, self).__init__(flat_hand_mean=False, **kwargs)
 
+        if torch.sum(torch.abs(self.shapedirs[:, 0, :] - self.shapedirs[:, 0, :])) < 1:
+            print('Fix shapedirs bug of MANO')
+            self.shapedirs[:, 0, :] *= -1
+
 
     def verts_transformations_pytorch3d(
             self,
