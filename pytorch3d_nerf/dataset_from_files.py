@@ -1,3 +1,8 @@
+import sys, os
+import glob
+sys.path.append("/home/azhuavlev/PycharmProjects/ml-neuman_mano")
+
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -16,9 +21,11 @@ class NeumanDataset(torch.utils.data.Dataset):
         self.cap_ids = cap_ids
 
         self.load_cameras()
-        self.load_images()
         self.load_silhouettes()
+        self.load_images()
         self.load_mano()
+
+        self.mask_images()
 
 
     def load_cameras(self):
@@ -90,11 +97,12 @@ class NeumanDataset(torch.utils.data.Dataset):
 
         self.images = []
 
-        for i in self.cap_ids:
+        for i, indx in enumerate(self.cap_ids):
             img_file = img_path + f'/{i:05d}.png'
             img = cv2.imread(img_file)
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             img = img.astype(np.float32) / 255.0
+
             self.images.append(img)
 
     def load_silhouettes(self):
@@ -102,7 +110,7 @@ class NeumanDataset(torch.utils.data.Dataset):
 
         self.silhouettes = []
 
-        for i in self.cap_ids:
+        for i, indx in enumerate(self.cap_ids):
             sil_file = sil_path + f'/{i:05d}.png'
             sil = cv2.imread(sil_file, cv2.IMREAD_GRAYSCALE)
             sil = sil.astype(np.float32) / 255.0
@@ -169,8 +177,57 @@ class NeumanDataset(torch.utils.data.Dataset):
             }
             self.manos.append(mano_dict)
 
+    def mask_images(self):
+        for i in range(len(self.images)):
+            silh_3ch = np.stack([self.silhouettes[i]] * 3, axis=2).astype(np.float32)
+            self.images[i] = self.images[i] * silh_3ch
+
+
     def __len__(self):
         return len(self.camera_params_opencv)
 
     def __getitem__(self, idx):
         return self.camera_params_opencv[idx], self.images[idx], self.silhouettes[idx], self.manos[idx]
+
+
+if __name__ == '__main__':
+    data_path = '/home/azhuavlev/Desktop/Data/InterHand_Neuman/03'
+
+    all_ids = list(range(len(
+        glob.glob(os.path.join(data_path, 'images', '*.png'))
+    )))
+
+    # use 80% of the data for training, randomize the order
+    np.random.shuffle(all_ids)
+    train_ids = all_ids[:int(0.7 * len(all_ids))]
+    test_ids = all_ids[int(0.7 * len(all_ids)):]
+    # train_ids = all_ids[:10]
+    # test_ids = all_ids[10:]
+    print(test_ids)
+
+    # We sample 1 random camera in a minibatch.
+    batch_size = 1
+
+    # # Use dataset of single image for debugging
+    # full_dataset = dataset_single_image.NeumanDataset(data_path, all_ids)
+    # train_loader = DataLoader(full_dataset, batch_size=batch_size, shuffle=True, num_workers=5)
+    # test_loader = DataLoader(full_dataset, batch_size=batch_size, shuffle=False, num_workers=5)
+    # full_loader = DataLoader(full_dataset, batch_size=batch_size, shuffle=False, num_workers=5)
+
+    # double_all_ids = all_ids + all_ids
+    # print(double_all_ids)
+    # exit()
+    train_dataset = NeumanDataset(data_path, train_ids)
+    test_dataset = NeumanDataset(data_path, test_ids)
+    full_dataset = NeumanDataset(data_path,
+                                                    all_ids
+                                                    )
+
+    import matplotlib.pyplot as plt
+    for i in range(10):
+        camera_params, images, silhouettes, manos = full_dataset[i]
+        fig, ax = plt.subplots(1, 2)
+        ax[0].imshow(images)
+        ax[1].imshow(silhouettes)
+        plt.show()
+        plt.close()

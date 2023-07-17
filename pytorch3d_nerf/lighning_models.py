@@ -10,11 +10,14 @@ import sys
 import time
 import torch
 import torch
+import torch.functional as F
 import torch.nn as nn
+import torchvision
 from IPython import display
 from PIL import Image
 from pytorch3d.renderer import (
     FoVPerspectiveCameras,
+    PerspectiveCameras,
     NDCMultinomialRaysampler,
     MonteCarloRaysampler,
     EmissionAbsorptionRaymarcher,
@@ -27,25 +30,20 @@ from pytorch3d.structures import Volumes
 from pytorch3d.transforms import so3_exp_map
 from tqdm import tqdm
 
+import mano_pytorch3d
+import sampling_utils
 from generate_cow_renders import generate_cow_renders
 from helpers import *
 from nerf import *
 from plot_image_grid import image_grid
-import torchvision
-
-import mano_pytorch3d
-import sampling_utils
-
-import torch.functional as F
-
-from pytorch3d.utils.camera_conversions import cameras_from_opencv_projection
+from losses import huber
 
 
 class HandModel(L.LightningModule):
     def __init__(self, dataset, nerf_model):
         super().__init__()
 
-        self.sil_loss_epochs = 1000
+        self.sil_loss_epochs = 999000
         self.sil_loss_start_factor = 0.1
 
         self.hand_model = mano_pytorch3d.MANOCustom(
@@ -62,8 +60,8 @@ class HandModel(L.LightningModule):
         self.raysampler_train = NDCMultinomialRaysampler(
             image_height=self.render_size_x,
             image_width=self.render_size_y,
-            n_rays_per_image=4096,
-            n_pts_per_ray=64,
+            n_rays_per_image=8192,
+            n_pts_per_ray=32,
             # min_depth=self.min_depth,
             # max_depth=self.max_depth,
             min_depth=0.1,
@@ -75,7 +73,7 @@ class HandModel(L.LightningModule):
         self.raysampler_test = NDCMultinomialRaysampler(
             image_height=self.render_size_x,
             image_width=self.render_size_y,
-            n_pts_per_ray=32,
+            n_pts_per_ray=64,
             min_depth=self.min_depth,
             max_depth=self.max_depth,
             stratified_sampling=False,
@@ -109,14 +107,15 @@ class HandModel(L.LightningModule):
             raysampler=self.raysampler_canonical, raymarcher=self.raymarcher,
         )
 
-
         # Instantiate the radiance field model.
         self.neural_radiance_field = nerf_model
 
         self.validation_images = []
         self.test_images = []
 
-        self.mae_loss = nn.L1Loss()
+        # self.loss_func = huber.huber
+        self.loss_func = nn.MSELoss()
+
 
 
     def calculate_camera_parameters(self, dataset):
@@ -126,17 +125,18 @@ class HandModel(L.LightningModule):
             camera_params, images, silhouettes, manos = element
 
             verts = self.hand_model.forward_pytorch3d(
-                betas= manos['shape'],
-                global_orient = manos['root_pose'],
-                hand_pose = manos['hand_pose'],
+                betas=manos['shape'],
+                global_orient=manos['root_pose'],
+                hand_pose=manos['hand_pose'],
                 transl=manos['trans'],
             )
-
-            camera = cameras_from_opencv_projection(
-                element[0]['R'],
-                element[0]['t'],
-                element[0]['intrinsic_mat'],
-                element[0]['image_size'],
+            camera = PerspectiveCameras(
+                R=camera_params['R_pytorch3d'],
+                T=camera_params['t_pytorch3d'],
+                focal_length=camera_params['focal'],
+                principal_point=camera_params['princpt'],
+                in_ndc=False,
+                image_size=camera_params['image_size'],
             )
             # calculate min and max depth from camera to hand
             depths = camera.get_world_to_view_transform().transform_points(verts)[:, :, 2:]
@@ -153,14 +153,13 @@ class HandModel(L.LightningModule):
             max(fars),
         ) * 1.2
 
-        self.render_size_x = images.shape[1] #// 2
-        self.render_size_y = images.shape[2] #// 2
+        self.render_size_x = images.shape[1]  # // 2
+        self.render_size_y = images.shape[2]  # // 2
 
         print('min_depth', self.min_depth)
         print('max_depth', self.max_depth)
         print('render_size_x', self.render_size_x)
         print('render_size_y', self.render_size_y)
-
 
     def configure_optimizers(self):
         # TODO lr decay
@@ -172,32 +171,30 @@ class HandModel(L.LightningModule):
         # learning rate: current_lr = base_lr * gamma ** (epoch / step_size)
         def lr_lambda(epoch):
             lr_scheduler_gamma = 0.1
-            lr_scheduler_step_size = 2000
+            lr_scheduler_step_size = 999000
             return lr_scheduler_gamma ** (
                     epoch / lr_scheduler_step_size
             )
+
         # The learning rate scheduling is implemented with LambdaLR PyTorch scheduler.
         lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
             optimizer, lr_lambda, verbose=False
         )
         return [optimizer], [lr_scheduler]
 
-
     def training_step(self, batch, batch_idx):
 
         camera_params, images, silhouettes, manos = batch
 
-        batch_cameras = cameras_from_opencv_projection(
-            camera_params['R'],
-            camera_params['t'],
-            camera_params['intrinsic_mat'],
-            camera_params['image_size'],
+        batch_cameras = PerspectiveCameras(
+            R=camera_params['R_pytorch3d'],
+            T=camera_params['t_pytorch3d'],
+            focal_length=camera_params['focal'],
+            principal_point=camera_params['princpt'],
+            in_ndc=False,
+            image_size=camera_params['image_size'],
+            device=self.device
         )
-
-        print(batch_cameras[0])
-        exit(0)
-
-
 
         depths = batch_cameras.get_world_to_view_transform().transform_points(
             manos['verts']
@@ -205,8 +202,6 @@ class HandModel(L.LightningModule):
 
         min_depth = depths.min() * 0.95
         max_depth = depths.max() * 1.05
-
-        # print('min_depth', min_depth, 'max_depth', max_depth)
 
         masks_sampling = sampling_utils.make_sampling_mask(
             silhouettes
@@ -228,22 +223,29 @@ class HandModel(L.LightningModule):
             rendered_images_silhouettes.split([3, 1], dim=-1)
         )
 
+        assert rendered_images.isnan().any() == False
+        assert rendered_silhouettes.isnan().any() == False
+
+
         # Compute the silhouette error as the mean huber
         # loss between the predicted masks and the
         # sampled target silhouettes.
         silhouettes_at_rays = sample_images_at_mc_locs(
-            #target_silhouettes[batch_idx, ..., None],
+            # target_silhouettes[batch_idx, ..., None],
             silhouettes.unsqueeze(-1),
             sampled_rays.xys
         )
+        assert silhouettes_at_rays.isnan().any() == False
+
         # sil_err = huber(
         #     rendered_silhouettes,
         #     silhouettes_at_rays,
         # ).abs().mean()
-        sil_err = self.mae_loss(
+        sil_err = self.loss_func(
             rendered_silhouettes,
             silhouettes_at_rays,
         )
+        assert sil_err.isnan() == False
 
         self.log('sil_loss_unconstrained', sil_err, prog_bar=True, logger=True)
 
@@ -254,7 +256,6 @@ class HandModel(L.LightningModule):
             sil_loss_factor = 0
         sil_err = sil_err * sil_loss_factor
 
-
         # Compute the color error as the mean huber
         # loss between the rendered colors and the
         # sampled target images.
@@ -263,15 +264,18 @@ class HandModel(L.LightningModule):
             images,
             sampled_rays.xys
         )
+        assert colors_at_rays.isnan().any() == False
+
         # color_err = huber(
         #     rendered_images,
         #     colors_at_rays,
         # ).abs().mean()
         # calculate color error as MSE
-        color_err = self.mae_loss(
+        color_err = self.loss_func(
             rendered_images,
             colors_at_rays,
         )
+        assert color_err.isnan() == False
 
         # Log the errors.
         self.log('color_loss', color_err, prog_bar=True, logger=True)
@@ -283,7 +287,7 @@ class HandModel(L.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        result = self.visualize_batch(batch, warp_rays=True, cameras_opencv=True, canonical_renderer=False)
+        result = self.visualize_batch(batch, warp_rays=True, cameras_canonical=False, canonical_renderer=False)
         self.validation_images.append(result)
 
     def on_validation_epoch_end(self):
@@ -291,10 +295,10 @@ class HandModel(L.LightningModule):
         self.validation_images = []
 
         tensorboard_logger = self.logger.experiment
-        tensorboard_logger.add_image('model_output', grid, self.current_epoch)
+        tensorboard_logger.add_image(f'model_output_{self.global_rank}', grid, self.current_epoch)
 
     def test_step(self, batch, batch_idx):
-        result = self.visualize_batch(batch, warp_rays=False, cameras_opencv=False, canonical_renderer=True)
+        result = self.visualize_batch(batch, warp_rays=False, cameras_canonical=True, canonical_renderer=True)
         self.test_images.append(result)
 
     def on_test_epoch_end(self):
@@ -302,18 +306,21 @@ class HandModel(L.LightningModule):
         # self.test_images = []
 
         tensorboard_logger = self.logger.experiment
-        tensorboard_logger.add_image('model_output_test', grid, self.current_epoch)
+        tensorboard_logger.add_image(f'model_output_test_{self.global_rank}', grid, self.current_epoch)
 
-    def visualize_batch(self, batch, warp_rays, cameras_opencv, canonical_renderer):
+    def visualize_batch(self, batch, warp_rays, cameras_canonical, canonical_renderer):
 
         camera_params, images, silhouettes, manos = batch
 
-        if cameras_opencv:
-            batch_cameras = cameras_from_opencv_projection(
-                camera_params['R'],
-                camera_params['t'],
-                camera_params['intrinsic_mat'],
-                camera_params['image_size'],
+        if not cameras_canonical:
+            batch_cameras = PerspectiveCameras(
+                R=camera_params['R_pytorch3d'],
+                T=camera_params['t_pytorch3d'],
+                focal_length=camera_params['focal'],
+                principal_point=camera_params['princpt'],
+                in_ndc=False,
+                image_size=camera_params['image_size'],
+                device=self.device
             )
         else:
             batch_cameras = FoVPerspectiveCameras(
@@ -392,5 +399,3 @@ class HandModel(L.LightningModule):
             n_batches=12
         )
         return ray_densities, ray_colors
-
-

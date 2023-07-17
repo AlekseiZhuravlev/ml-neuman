@@ -47,6 +47,7 @@ import datasets.dataset_single_image as dataset_single_image
 from lightning.pytorch.strategies import DDPStrategy
 
 if __name__ == '__main__':
+
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     data_path = '/home/azhuavlev/Desktop/Data/InterHand_Neuman/03'
@@ -72,9 +73,14 @@ if __name__ == '__main__':
     # test_loader = DataLoader(full_dataset, batch_size=batch_size, shuffle=False, num_workers=5)
     # full_loader = DataLoader(full_dataset, batch_size=batch_size, shuffle=False, num_workers=5)
 
+    # double_all_ids = all_ids + all_ids
+    # print(double_all_ids)
+    # exit()
     train_dataset = dataset_from_files.NeumanDataset(data_path, train_ids)
     test_dataset = dataset_from_files.NeumanDataset(data_path, test_ids)
-    full_dataset = dataset_from_files.NeumanDataset(data_path, all_ids)
+    full_dataset = dataset_from_files.NeumanDataset(data_path,
+                                                    all_ids
+                                                    )
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=5)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=5)
@@ -87,17 +93,17 @@ if __name__ == '__main__':
     model = lighning_models.HandModel(dataset=full_loader, nerf_model=nerf)
 
     output_dir = '/home/azhuavlev/Desktop/Results/neuman_custom/'
-    logger = TensorBoardLogger(output_dir, version='big_sil_loss_1000_mask_0.05_dilation_50_sampling_8192_32_depth_105_mae_mask_mae')
+    logger = TensorBoardLogger(output_dir, version='big_clipped_sil_loss_99999_lr_99999_mask_1_dilation_10_sampling_8192_32_depth_105_mse')
 
     lr_monitor = LearningRateMonitor(logging_interval='step')
 
     trainer = L.Trainer(
-        max_epochs=2001,
+        max_epochs=10001,
         benchmark=True,
         logger=logger,
         default_root_dir=output_dir,
         check_val_every_n_epoch=200,
-        log_every_n_steps=15,
+        log_every_n_steps=20,
         #TODO changed
         callbacks=[
             lr_monitor,
@@ -107,7 +113,7 @@ if __name__ == '__main__':
     trainer.fit(
         model,
         train_loader,
-        # full_loader,
+        full_loader,
         # ckpt_path='/home/azhuavlev/Desktop/Results/neuman_custom/lightning_logs/version_13/checkpoints/epoch=999-step=48000.ckpt'
     )
 
