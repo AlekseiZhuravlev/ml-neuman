@@ -93,7 +93,7 @@ if __name__ == '__main__':
     model = lighning_models.HandModel(dataset=full_loader, nerf_model=nerf)
 
     output_dir = '/home/azhuavlev/Desktop/Results/neuman_custom/'
-    logger = TensorBoardLogger(output_dir, version='big_clipped_sil_loss_99999_lr_99999_mask_1_dilation_10_sampling_8192_32_depth_105_mse')
+    logger = TensorBoardLogger(output_dir, version='big_clipped_sil_loss_99999_lr_99999_mask_0.3_dilation_10_sampling_8192_32_depth_105_mae')
 
     lr_monitor = LearningRateMonitor(logging_interval='step')
 
