@@ -277,6 +277,27 @@ class NeuralRadianceField(torch.nn.Module):
         ]
         return rays_densities, rays_colors
 
+    def forward_points(
+            self,
+            rays_points_world,
+            ray_directions,
+            **kwargs,
+    ):
+        # For each 3D world coordinate, we obtain its harmonic embedding.
+        embeds_xyz = self.harmonic_embedding_xyz(rays_points_world)
+        # embeds_xyz.shape = [minibatch x ... x self.n_harmonic_functions*6 + 3]
+
+        # self.mlp maps each harmonic embedding to a latent feature space.
+        features = self.mlp_xyz(embeds_xyz, embeds_xyz)
+        # features.shape = [minibatch x ... x self.n_hidden_neurons_xyz]
+
+        rays_densities = self._get_densities(
+            features, torch.Tensor(0), 0.0
+        )
+        rays_colors = self._get_colors(features, ray_directions)
+
+        return rays_densities, rays_colors
+
 
 class MLPWithInputSkips(torch.nn.Module):
     """

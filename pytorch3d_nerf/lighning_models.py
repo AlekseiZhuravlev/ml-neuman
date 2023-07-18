@@ -113,9 +113,9 @@ class HandModel(L.LightningModule):
         self.validation_images = []
         self.test_images = []
 
-        # self.loss_func = huber.huber
+        self.loss_func = huber.huber
         # self.loss_func = nn.MSELoss()
-        self.loss_func = nn.L1Loss()
+        # self.loss_func = nn.L1Loss()
 
 
 
