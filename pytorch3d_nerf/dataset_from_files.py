@@ -89,7 +89,8 @@ class NeumanDataset(torch.utils.data.Dataset):
                     'image_size': image_size,
                     'focal': focal,
                     'princpt': princpt,
-                    'campos': campos
+                    'campos': campos,
+                    'camrot': camrot,
                 })
 #
     def load_images(self):
@@ -129,6 +130,7 @@ class NeumanDataset(torch.utils.data.Dataset):
 
     def load_mano(self):
         mano_path = self.exp_dir + '/mano'
+        joints_path = self.exp_dir + '/joints'
 
         hand_model = mano_pytorch3d.MANOCustom(
             model_path='/home/azhuavlev/Desktop/Data/models/mano/MANO_LEFT.pkl',
@@ -167,14 +169,26 @@ class NeumanDataset(torch.utils.data.Dataset):
                 transl=trans.unsqueeze(0)
             )
 
+            # check if joints_path exists
+            if os.path.exists(joints_path):
+                joints_file = joints_path + f'/{i:05d}.json'
+                with open(joints_file) as f:
+                    joints = json.load(f)
+            else:
+                joints = 0
+
+
             mano_dict = {
                 'root_pose': root_pose,
                 'hand_pose': hand_pose,
+                'pose': mano_pose,
                 'shape': shape,
                 'trans':trans,
                 'verts': vertices_py3d.squeeze(0),
                 'Ts': Ts_xyz.squeeze(0),
+                'joints': joints,
             }
+
             self.manos.append(mano_dict)
 
     def mask_images(self):

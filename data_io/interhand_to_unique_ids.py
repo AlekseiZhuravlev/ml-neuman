@@ -59,6 +59,7 @@ class InterhandToNeumanConverter:
         self.camera_path = self.target_folder + '/cameras'
         self.rgb_path = self.target_folder + '/images'
         self.mano_path = self.target_folder + '/mano'
+        self.joints_path = self.target_folder + '/joints'
 
         # check that all cameras have the same number of images
         clear_folder(self.target_folder)
@@ -67,6 +68,7 @@ class InterhandToNeumanConverter:
         os.makedirs(self.rgb_path, exist_ok=True)
         os.makedirs(self.mano_path, exist_ok=True)
         os.makedirs(self.camera_path, exist_ok=True)
+        os.makedirs(self.joints_path, exist_ok=True)
 
         self.curr_img = 0
         self.mapping = dict()
@@ -74,6 +76,9 @@ class InterhandToNeumanConverter:
         with open(self.base_folder + f'/annotations/{self.split}/InterHand2.6M_{self.split}_MANO_NeuralAnnot.json',
                   'r') as f:
             self.mano_dict = json.load(f)
+        with open(self.base_folder + f'/annotations/{self.split}/InterHand2.6M_{self.split}_joint_3d.json',
+                  'r') as f:
+            self.joint_dict = json.load(f)
 
         self.max_images_per_camera = max_images_per_camera
 
@@ -160,6 +165,10 @@ class InterhandToNeumanConverter:
         with open(f'{self.mano_path}/{self.curr_img:05d}.json', 'w') as f:
             json.dump(mano_params, f)
 
+        joint_params = self.joint_dict[self.capture_n][img_id]
+        with open(f'{self.joints_path}/{self.curr_img:05d}.json', 'w') as f:
+            json.dump(joint_params, f)
+
     def create_camera(self, camera):
         # load camera parameters
         campos = self.camera_params_dict[self.capture_n]['campos'][camera]
@@ -213,9 +222,9 @@ if __name__ == '__main__':
         cameras_list=None,#['400262', '400263', '400264', '400265', '400284'],
         # val_cameras_frac=0.1,
         # max_cameras=15,
-        experiment_n='04',
+        experiment_n='05_joints',
         max_images_per_camera=1,
-        max_cameras=1
+        max_cameras=60
     )
     converter.copy_images()
 

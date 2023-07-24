@@ -1,0 +1,185 @@
+import json
+import os
+
+import numpy as np
+from PIL import Image
+from tqdm import tqdm
+
+import sys
+
+# sys.path.append('../..')
+
+
+def clear_folder(folder):
+    """
+    Clear root folder from previous experiments
+    """
+    os.system(f'rm -rf {folder}/*')
+
+
+class InterhandToNeumanConverter:
+    def __init__(self, basefolder, split, capture_n, pose,
+                 cameras_list, experiment_n, max_images_per_camera, max_cameras):
+        """
+        :param basefolder: path to the InterHand dataset
+        :param split: 'train', 'test' or 'val'
+        :param capture_n: capture number
+        :frames_list_slice: during iteration over the frames for each camera, only use frames from this slice
+        :param pose: hand pose
+        :param cameras_list: list of cameras to use. If None, all cameras are used
+        :param val_cameras_frac: fraction of cameras to use for validation
+        :param max_cameras: maximum number of cameras to use if cameras_list is None
+        :param experiment_n: experiment number
+        """
+        self.split = split
+        self.capture_n = capture_n
+        self.pose = pose
+
+        self.base_folder = basefolder
+        self.pose_path = self.base_folder + '/' + 'images' + '/' + split + '/' + \
+                         f"Capture{capture_n}" + '/' + pose
+        self.max_cameras = max_cameras
+
+        if cameras_list:
+            self.cameras_list = cameras_list
+        else:
+            self.cameras_list = [folder_name[3:] for folder_name in sorted(os.listdir(self.pose_path))]
+        self.cameras_list = self.cameras_list[:self.max_cameras]
+
+        self.target_folder = '/itet-stor/azhuavlev/net_scratch/Projects/Data/InterHand_Neuman/' \
+                             f'{experiment_n}'
+
+        self.camera_path = self.target_folder + '/cameras'
+        self.rgb_path = self.target_folder + '/images'
+        self.mano_path = self.target_folder + '/mano'
+        self.joints_path = self.target_folder + '/joints'
+
+        # check that all cameras have the same number of images
+        clear_folder(self.target_folder)
+
+        os.makedirs(self.target_folder, exist_ok=True)
+        os.makedirs(self.rgb_path, exist_ok=True)
+        os.makedirs(self.mano_path, exist_ok=True)
+        os.makedirs(self.camera_path, exist_ok=True)
+        os.makedirs(self.joints_path, exist_ok=True)
+
+# '/home/azhuavlev/Desktop/Data/Interhand_masked/annotations/test/'
+        with open(self.base_folder + f'/annotations/{self.split}/InterHand2.6M_{self.split}_MANO_NeuralAnnot.json',
+                  'r') as f:
+            self.mano_dict = json.load(f)
+        with open(self.base_folder + f'/annotations/{self.split}/InterHand2.6M_{self.split}_joint_3d.json',
+                  'r') as f:
+            self.joint_dict = json.load(f)
+
+        self.max_images_per_camera = max_images_per_camera
+
+        with open(self.base_folder + '/annotations/' + self.split + '/InterHand2.6M_' + split + '_camera.json') as f:
+            self.camera_params_dict = json.load(f)
+
+        self.curr_img = 0
+
+    def check_camera_img_count(self):
+        """
+        Check that all cameras have the same number of images
+        """
+        camera_img_count = []
+        for camera in self.cameras_list:
+            camera_folder = self.pose_path + '/' + f'cam{camera}'
+            camera_img_count.append(len(os.listdir(camera_folder)))
+
+        # remove cameras from self.cameras_list if they have less images than the majority of cameras
+        max_img_count = max(camera_img_count)
+        for i, camera in enumerate(self.cameras_list):
+            if camera_img_count[i] < max_img_count:
+                self.cameras_list.remove(camera)
+                print(f'Removing camera {camera} from the list of cameras to use, it has {camera_img_count[i]} images'
+                      f' while the majority of cameras have {max_img_count} images')
+
+        print('All cameras have the same number of images')
+        return camera_img_count[0]
+
+    def copy_images(self):
+        """
+        Copy images from interhand to neuman format
+        """
+        n_images_per_camera = self.check_camera_img_count()
+        n_images = min(n_images_per_camera, self.max_images_per_camera)
+
+        for j_image in tqdm(range(n_images)):
+            for i_camera, camera in enumerate(self.cameras_list):
+                camera_folder = self.base_folder + '/images/' + self.split + '/' + \
+                                f"Capture{self.capture_n}" + '/' + self.pose + '/' + f'cam{camera}'
+                img = sorted(os.listdir(camera_folder))[j_image]
+
+                self.copy_image(
+                    from_path=camera_folder,
+                    img_name=img,
+                    to_path=self.target_folder + '/images',
+                    grayscale=False)
+
+                self.create_mano(img)
+
+                self.create_camera(camera)
+                self.curr_img += 1
+
+
+    def copy_image(self, from_path, img_name, to_path, grayscale):
+        os.makedirs(to_path, exist_ok=True)
+        # copy image to rgb folder
+        os.system(f'cp {from_path}/{img_name} {to_path}/{img_name}')
+
+        img_jpg = Image.open(f'{to_path}/{img_name}')
+
+        if grayscale:
+            img_jpg = img_jpg.convert('L')
+
+        # save image as png and remove jpg
+        img_jpg.save(f'{to_path}/{self.curr_img:05d}.png')
+        os.system(f'rm {to_path}/{img_name}')
+
+
+    def create_mano(self, img_name):
+        img_id = img_name[5:-4]
+        mano_params = self.mano_dict[self.capture_n][img_id]
+        with open(f'{self.mano_path}/{self.curr_img:05d}.json', 'w') as f:
+            json.dump(mano_params, f)
+
+        joint_params = self.joint_dict[self.capture_n][img_id]
+        with open(f'{self.joints_path}/{self.curr_img:05d}.json', 'w') as f:
+            json.dump(joint_params, f)
+
+    def create_camera(self, camera):
+        # load camera parameters
+        campos = self.camera_params_dict[self.capture_n]['campos'][camera]
+        camrot = self.camera_params_dict[self.capture_n]['camrot'][camera]
+        focal = self.camera_params_dict[self.capture_n]['focal'][camera]
+        princpt = self.camera_params_dict[self.capture_n]['princpt'][camera]
+
+        # create camera parameters dict
+        camera_params = {
+            'camrot': camrot,
+            'campos': campos,
+            'focal': focal,
+            'princpt': princpt,
+        }
+
+        # save camera parameters to file
+        with open(f'{self.camera_path}/{self.curr_img:05d}.json', 'w') as f:
+            json.dump(camera_params, f, indent=4)
+
+
+if __name__ == '__main__':
+    converter = InterhandToNeumanConverter(
+        basefolder='/home/azhuavlev/Desktop/Data/InterHand',
+        split='test',
+        capture_n='0',
+        pose='ROM04_LT_Occlusion',
+        # frames_list_slice=slice(None, 100, None),
+        cameras_list=None,#['400262', '400263', '400264', '400265', '400284'],
+        # val_cameras_frac=0.1,
+        # max_cameras=15,
+        experiment_n='06_clean',
+        max_images_per_camera=1,
+        max_cameras=60
+    )
+    converter.copy_images()
