@@ -30,11 +30,9 @@ from pytorch3d.structures import Volumes
 from pytorch3d.transforms import so3_exp_map
 from tqdm import tqdm
 
-import mano_pytorch3d
+from mano_custom import mano_pytorch3d
 import sampling_utils
-from generate_cow_renders import generate_cow_renders
 from helpers import *
-from nerf import *
 from plot_image_grid import image_grid
 from losses import huber
 
@@ -163,7 +161,6 @@ class HandModel(L.LightningModule):
         print('render_size_y', self.render_size_y)
 
     def configure_optimizers(self):
-        # TODO lr decay
         # Instantiate the Adam optimizer. We set its master learning rate to 1e-3.
         lr = 5e-4
         optimizer = torch.optim.Adam(self.neural_radiance_field.parameters(), lr=lr)

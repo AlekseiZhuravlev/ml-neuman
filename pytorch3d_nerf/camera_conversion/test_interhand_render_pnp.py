@@ -40,6 +40,7 @@ def save_obj(v, f, file_name='output.obj'):
 
 
 def render_mesh(mesh, face, cam_param, render_shape, hand_type):
+    device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     batch_size, vertex_num = mesh.shape[:2]
     mesh = mesh / 1000  # milimeter to meter
 
@@ -82,7 +83,7 @@ def render_point_cloud(mesh, face, cam_param, render_shape, hand_type):
     device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 
     batch_size, vertex_num = mesh.shape[:2]
-    mesh = mesh / 1000  # milimeter to meter
+    # mesh = mesh / 1000  # milimeter to meter
 
     mesh = torch.stack((-mesh[:, :, 0], -mesh[:, :, 1], mesh[:, :, 2]),
                        2)  # reverse x- and y-axis following PyTorch3D axis direction

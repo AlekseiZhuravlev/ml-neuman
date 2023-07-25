@@ -20,7 +20,7 @@ class NeumanDataset(torch.utils.data.Dataset):
         self.exp_dir = exp_dir
         self.cap_ids = cap_ids
 
-        self.load_cameras()
+        self.load_cameras_interhand()
         self.load_silhouettes()
         self.load_images()
         self.load_mano()
@@ -28,10 +28,12 @@ class NeumanDataset(torch.utils.data.Dataset):
         self.mask_images()
 
 
-    def load_cameras(self):
+    def load_cameras_interhand(self):
         cam_path = self.exp_dir + '/cameras'
 
-        self.camera_params_opencv = []
+        self.camera_params_interhand = []
+        self.camera_params_training = []
+
         for i in self.cap_ids:
             json_file = cam_path + f'/{i:05d}.json'
             with open(json_file) as f:
@@ -54,7 +56,7 @@ class NeumanDataset(torch.utils.data.Dataset):
                 # (height, width)
                 image_size = np.array([512.0, 334.0], dtype=np.float32)
 
-                self.camera_params_opencv.append({
+                self.camera_params_interhand.append({
                     'R': R,
                     't': t,
                     'intrinsic_mat': intrinsic_mat,
@@ -63,6 +65,17 @@ class NeumanDataset(torch.utils.data.Dataset):
                     'princpt': princpt,
                     'campos': campos,
                     'camrot': camrot,
+                })
+
+                R_train = torch.eye(3)
+                t_train = torch.zeros(3)
+                self.camera_params_training.append({
+                    'R_pytorch3d': R_train,
+                    't_pytorch3d': t_train,
+                    'intrinsic_mat': intrinsic_mat,
+                    'image_size': image_size,
+                    'focal': focal,
+                    'princpt': princpt,
                 })
 #
     def load_images(self):
@@ -116,11 +129,6 @@ class NeumanDataset(torch.utils.data.Dataset):
 
             root_pose, hand_pose, shape, trans = self.apply_extr_to_mano(mano, hand_model, j_curr_item)
 
-            # print('root_pose', root_pose.dtype)
-            # print('hand_pose', hand_pose.dtype)
-            # print('shape', shape.dtype)
-            # print('trans', trans.dtype)
-
             _, Ts_xyz = hand_model.verts_transformations_pytorch3d(
                 betas=shape,
                 global_orient=root_pose,
@@ -156,8 +164,8 @@ class NeumanDataset(torch.utils.data.Dataset):
 
     def apply_extr_to_mano(self, mano_param, hand_model, j_curr_item):
 
-        R = self.camera_params_opencv[j_curr_item]['R']
-        t = self.camera_params_opencv[j_curr_item]['t']
+        R = self.camera_params_interhand[j_curr_item]['R']
+        t = self.camera_params_interhand[j_curr_item]['t']
 
         mano_pose = torch.tensor(mano_param['pose'], dtype=torch.float32).view(-1, 3)
         root_pose = mano_pose[0].numpy()
@@ -196,7 +204,7 @@ class NeumanDataset(torch.utils.data.Dataset):
 
 
     def __len__(self):
-        return len(self.camera_params_opencv)
+        return len(self.images)
 
     def __getitem__(self, idx):
-        return self.camera_params_opencv[idx], self.images[idx], self.silhouettes[idx], self.manos[idx]
+        return self.camera_params_training[idx], self.images[idx], self.silhouettes[idx], self.manos[idx]

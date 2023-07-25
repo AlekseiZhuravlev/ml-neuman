@@ -27,13 +27,11 @@ from tqdm import tqdm
 import sys
 sys.path.append("/home/azhuavlev/PycharmProjects/ml-neuman_mano")
 
-from data_io import neuman_helper
-from generate_cow_renders import generate_cow_renders
 from helpers import *
 from plot_image_grid import image_grid
 
 from torch.utils.data import DataLoader
-import dataset_from_files
+from datasets import dataset_extr_to_mano
 import lighning_models
 import lightning as L
 from lightning.pytorch.loggers import TensorBoardLogger
@@ -56,9 +54,9 @@ if __name__ == '__main__':
     test_ids = all_ids[int(0.6 * len(all_ids)):]
     print(test_ids)
 
-    train_dataset = dataset_from_files.NeumanDataset(data_path, train_ids)
-    test_dataset = dataset_from_files.NeumanDataset(data_path, test_ids)
-    full_dataset = dataset_from_files.NeumanDataset(data_path, all_ids)
+    train_dataset = dataset_extr_to_mano.NeumanDataset(data_path, train_ids)
+    test_dataset = dataset_extr_to_mano.NeumanDataset(data_path, test_ids)
+    full_dataset = dataset_extr_to_mano.NeumanDataset(data_path, all_ids)
 
     # We sample 6 random cameras in a minibatch.
     batch_size = 1
