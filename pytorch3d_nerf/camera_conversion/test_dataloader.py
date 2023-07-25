@@ -38,7 +38,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # Load the data
 # Datasets
 from torch.utils.data import DataLoader
-import dataset_from_files
+from datasets import dataset_from_files
 import glob
 
 import smplx
@@ -57,7 +57,8 @@ MeshRasterizer,
 TexturesVertex)
 from pytorch3d.transforms.so3 import so3_exponential_map, so3_log_map
 import matplotlib.pyplot as plt
-import mano_pytorch3d
+from mano_custom import mano_pytorch3d
+from pytorch3d.utils.camera_conversions import cameras_from_opencv_projection
 
 def render_mesh(mesh, face, cameras):
     batch_size, vertex_num = mesh.shape[:2]
@@ -126,16 +127,16 @@ if __name__ == '__main__':
     # verts = example[3]['verts'].cuda()
 
     # for batch in test_loader:
-    for i in range(len(test_dataset)):
+    for i in test_loader:
 
         # TODO is dataloader the issue?
-        camera_params, images, silhouettes, manos = test_dataset[i]
+        camera_params, images, silhouettes, manos = i
 
         verts_orig = hand_model.forward(
-            betas=manos['shape'][None, :],
-            global_orient=manos['root_pose'][None, :],
-            hand_pose=manos['hand_pose'][None, :],
-            transl=manos['trans'][None, :],
+            betas=manos['shape'],
+            global_orient=manos['root_pose'],
+            hand_pose=manos['hand_pose'],
+            transl=manos['trans'],
         ).vertices.to(device)
 
         faces = torch.from_numpy(hand_model.faces.astype(np.int32))[None, :, :].to(device)
@@ -145,10 +146,10 @@ if __name__ == '__main__':
 
         with torch.no_grad():
             mano_output = hand_model.forward(
-                betas=manos['shape'][None, :],
-                global_orient=manos['root_pose'][None, :],
-                hand_pose=manos['hand_pose'][None, :],
-                transl=manos['trans'][None, :],
+                betas=manos['shape'],
+                global_orient=manos['root_pose'],
+                hand_pose=manos['hand_pose'],
+                transl=manos['trans'],
             )
         verts_xyz = mano_output.vertices
         joints_xyz = mano_output.joints
@@ -161,6 +162,9 @@ if __name__ == '__main__':
         t, R = np.array(campos, dtype=np.float32).reshape(3), np.array(
             camrot, dtype=np.float32).reshape(3, 3)
         t = -np.dot(R, t.reshape(3, 1)).reshape(3)  # -Rt -> t
+
+        R = torch.from_numpy(R).to(device).unsqueeze(0)
+        t = torch.from_numpy(t).to(device).unsqueeze(0)
         # mesh = np.dot(R, verts_xyz.squeeze(0).transpose(1, 0)).transpose(1, 0) + t.reshape(1, 3)
 
         mesh = verts_xyz.numpy()[0]
@@ -173,19 +177,27 @@ if __name__ == '__main__':
         # reverse x- and y-axis following PyTorch3D axis direction
         mesh = torch.stack((-mesh[:, :, 0], -mesh[:, :, 1], mesh[:, :, 2]), 2)
 
-        cameras = PerspectiveCameras(focal_length=camera_params['focal'][None, :],
-                                    principal_point=camera_params['princpt'][None, :],
-                                    device=device,
-                                    in_ndc=False,
-                                    image_size=camera_params['image_size'][None, :]
-                                     )
+        # cameras = PerspectiveCameras(focal_length=camera_params['focal'][None, :],
+        #                             principal_point=camera_params['princpt'][None, :],
+        #                             device=device,
+        #                             in_ndc=False,
+        #                             image_size=camera_params['image_size'][None, :]
+        #                              )
+
+        R = R.permute(0, 2, 1)
+        cameras = cameras_from_opencv_projection(
+            R,
+            t,
+            camera_params['intrinsic_mat'],
+            camera_params['image_size'],
+        )
 
         img, depth = render_mesh(mesh, faces, cameras)
 
         fig, ax = plt.subplots(1, 2, figsize=(10, 5))
 
         ax[0].imshow(img[0].cpu().numpy().astype(np.uint8))
-        ax[1].imshow(images)
+        ax[1].imshow(images[0])
 
         # save figure
         # plt.savefig('test.png')

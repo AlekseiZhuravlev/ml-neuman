@@ -9,27 +9,42 @@ from smplx.utils import (
     FLAMEOutput)
 from typing import Optional, Dict, Union
 
-from models.smpl import lbs as lbs_custom
-from utils import utils, ray_utils
 
-import trimesh
-import igl
+from mano_custom.smpl_custom import lbs as lbs_custom
 
 
+def create_mano_custom(
+        return_right_hand: bool,
+):
+    # keep flat_hand_mean=False, in images it is the only way
+    left_hand = MANOCustom(
+        model_path='/home/azhuavlev/Desktop/Data/models/mano/MANO_LEFT.pkl',
+        is_rhand=False,
+        use_pca=False,
+        flat_hand_mean=False
+    )
+    right_hand = MANOCustom(
+        model_path='/home/azhuavlev/Desktop/Data/models/mano/MANO_RIGHT.pkl',
+        is_rhand=True,
+        use_pca=False,
+        flat_hand_mean=False
+    )
+    if torch.sum(torch.abs(left_hand.shapedirs[:, 0, :] - right_hand.shapedirs[:, 0, :])) < 1:
+        print('Fix shapedirs bug of MANO')
+        left_hand.shapedirs[:, 0, :] *= -1
+    else:
+        print('Checked MANO, no need to change shapedirs')
 
+    if return_right_hand:
+        return right_hand
+    else:
+        return left_hand
 
-import lightning as L
 
 
 class MANOCustom(smplx.MANO):
     def __init__(self, **kwargs):
-        # keep flat_hand_mean=False, in images it is the only way
-        super(MANOCustom, self).__init__(flat_hand_mean=False, **kwargs)
-
-        if torch.sum(torch.abs(self.shapedirs[:, 0, :] - self.shapedirs[:, 0, :])) < 1:
-            print('Fix shapedirs bug of MANO')
-            self.shapedirs[:, 0, :] *= -1
-
+        super(MANOCustom, self).__init__(**kwargs)
 
     def verts_transformations_pytorch3d(
             self,
@@ -42,7 +57,7 @@ class MANOCustom(smplx.MANO):
         ''' Forward pass for the MANO model
         Same as unbatched, but will not squeeze the batch dimension of T and vertices
         returns
-        vertices torch.Size([1, 778, 3]) - ZERO POSE vertices in PyTorch3D format
+        vertices torch.Size([1, 778, 3]) - ZERO POSE vertices in XYZ format !!!
         T torch.Size([1, 778, 4, 4]) - !!! transformation matrices in XYZ format !!!
         '''
 
@@ -67,8 +82,8 @@ class MANOCustom(smplx.MANO):
         else:
             T = L
 
-        vertices = torch.stack((-vertices[:, :, 0], -vertices[:, :, 1], vertices[:, :, 2]),
-                            2)
+        # vertices = torch.stack((-vertices[:, :, 0], -vertices[:, :, 1], vertices[:, :, 2]),
+        #                     2)
         return vertices, T
 
     def forward_pytorch3d(self,
