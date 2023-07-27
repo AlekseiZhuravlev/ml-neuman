@@ -132,11 +132,7 @@ class NeumanDataset(torch.utils.data.Dataset):
         mano_path = self.exp_dir + '/mano'
         joints_path = self.exp_dir + '/joints'
 
-        hand_model = mano_pytorch3d.MANOCustom(
-            model_path='/home/azhuavlev/Desktop/Data/models/mano/MANO_LEFT.pkl',
-            is_rhand=False,
-            use_pca=False,
-        )
+        hand_model = mano_pytorch3d.create_mano_custom(return_right_hand=False)
 
         self.manos = []
         for i in self.cap_ids:

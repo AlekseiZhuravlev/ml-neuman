@@ -35,6 +35,7 @@ import sampling_utils
 from helpers import *
 from plot_image_grid import image_grid
 from losses import huber
+import warp_points
 
 
 class HandModel(L.LightningModule):
@@ -44,30 +45,24 @@ class HandModel(L.LightningModule):
         self.sil_loss_epochs = 999000
         self.sil_loss_start_factor = 0.1
 
-        self.hand_model = mano_pytorch3d.MANOCustom(
-            model_path='/home/azhuavlev/Desktop/Data/models/mano/MANO_LEFT.pkl',
-            is_rhand=False,
-            use_pca=False,
-        )
+        self.hand_model = mano_pytorch3d.create_mano_custom(return_right_hand=False)
 
-        self.calculate_camera_parameters(dataset)
+        self.min_depth = 0.1
+        self.max_depth = 2
 
-        # Here, NDCMultinomialRaysampler generates a rectangular image
-        # grid of rays whose coordinates follow the PyTorch3D
-        # coordinate conventions.
+        self.render_size_x = 512
+        self.render_size_y = 334
+
         self.raysampler_train = NDCMultinomialRaysampler(
             image_height=self.render_size_x,
             image_width=self.render_size_y,
             n_rays_per_image=8192,
             n_pts_per_ray=32,
-            # min_depth=self.min_depth,
-            # max_depth=self.max_depth,
-            min_depth=0.1,
-            max_depth=1,
+            min_depth=self.min_depth,
+            max_depth=self.max_depth,
             stratified_sampling=True,
 
         )
-        # TODO what is min_depth for test?
         self.raysampler_test = NDCMultinomialRaysampler(
             image_height=self.render_size_x,
             image_width=self.render_size_y,
@@ -76,7 +71,6 @@ class HandModel(L.LightningModule):
             max_depth=self.max_depth,
             stratified_sampling=False,
         )
-
         self.raysampler_canonical = NDCMultinomialRaysampler(
             image_height=self.render_size_x,
             image_width=self.render_size_y,
@@ -85,19 +79,8 @@ class HandModel(L.LightningModule):
             max_depth=1,
             stratified_sampling=False,
         )
-
-        # 2) Instantiate the raymarcher.
-        # Here, we use the standard EmissionAbsorptionRaymarcher
-        # which marches along each ray in order to render
-        # the ray into a single 3D color vector
-        # and an opacity scalar.
         self.raymarcher = EmissionAbsorptionRaymarcher()
 
-        # Finally, instantiate the implicit renders
-        # for both raysamplers.
-        self.renderer_train = ImplicitRenderer(
-            raysampler=self.raysampler_train, raymarcher=self.raymarcher,
-        )
         self.renderer_test = ImplicitRenderer(
             raysampler=self.raysampler_test, raymarcher=self.raymarcher,
         )
@@ -115,50 +98,6 @@ class HandModel(L.LightningModule):
         # self.loss_func = nn.MSELoss()
         # self.loss_func = nn.L1Loss()
 
-
-
-    def calculate_camera_parameters(self, dataset):
-        nears = []
-        fars = []
-        for element in dataset:
-            camera_params, images, silhouettes, manos = element
-
-            verts = self.hand_model.forward_pytorch3d(
-                betas=manos['shape'],
-                global_orient=manos['root_pose'],
-                hand_pose=manos['hand_pose'],
-                transl=manos['trans'],
-            )
-            camera = PerspectiveCameras(
-                R=camera_params['R_pytorch3d'],
-                T=camera_params['t_pytorch3d'],
-                focal_length=camera_params['focal'],
-                principal_point=camera_params['princpt'],
-                in_ndc=False,
-                image_size=camera_params['image_size'],
-            )
-            # calculate min and max depth from camera to hand
-            depths = camera.get_world_to_view_transform().transform_points(verts)[:, :, 2:]
-
-            nears.append(depths.min())
-            fars.append(depths.max())
-
-        self.min_depth = min(
-            min(nears),
-            min(fars),
-        ) * 0.8
-        self.max_depth = max(
-            max(nears),
-            max(fars),
-        ) * 1.2
-
-        self.render_size_x = images.shape[1]  # // 2
-        self.render_size_y = images.shape[2]  # // 2
-
-        print('min_depth', self.min_depth)
-        print('max_depth', self.max_depth)
-        print('render_size_x', self.render_size_x)
-        print('render_size_y', self.render_size_y)
 
     def configure_optimizers(self):
         # Instantiate the Adam optimizer. We set its master learning rate to 1e-3.
@@ -179,6 +118,7 @@ class HandModel(L.LightningModule):
             optimizer, lr_lambda, verbose=False
         )
         return [optimizer], [lr_scheduler]
+
 
     def training_step(self, batch, batch_idx):
 
@@ -205,40 +145,69 @@ class HandModel(L.LightningModule):
             silhouettes
         )
 
-        # Evaluate the nerf model.
-        rendered_images_silhouettes, sampled_rays = self.renderer_train(
+
+        ###############################################################
+        # Ray sampling + warping
+        ###############################################################
+
+        ray_bundle = self.raysampler(
             cameras=batch_cameras,
-            volumetric_function=self.neural_radiance_field,
-            vertices=manos['verts'],
-            Ts=manos['Ts'],
             mask=masks_sampling,
-            warp_rays=True,
             min_depth=min_depth,
             max_depth=max_depth,
         )
+        rays_points_world = ray_bundle_to_ray_points(ray_bundle)
 
+        # Warp the rays to the canonical view.
+        rays_points_can, ray_directions_can = warp_points.warp_points(
+            rays_points_world,
+            manos['verts'],
+            manos['Ts'],
+        )
+
+        ###########################################################################
+        # Rendering
+        ###########################################################################
+
+        # get output of nerf model
+        rays_densities, rays_features = self.neural_radiance_field(
+            rays_points=rays_points_can, ray_directions=ray_directions_can
+        )
+
+        # render the images and silhouettes
+        rendered_images_silhouettes = self.raymarcher(
+            rays_densities=rays_densities,
+            rays_features=rays_features,
+        )
         rendered_images, rendered_silhouettes = (
             rendered_images_silhouettes.split([3, 1], dim=-1)
         )
-
         assert rendered_images.isnan().any() == False
         assert rendered_silhouettes.isnan().any() == False
 
+        print('rendered_images_silhouettes', rendered_images_silhouettes.shape)
+        exit(0)
 
-        # Compute the silhouette error as the mean huber
-        # loss between the predicted masks and the
-        # sampled target silhouettes.
+        ###########################################################################
+        # Silhouette loss, canonical space
+        ###########################################################################
+
+        # TODO write new loss
+        # TODO change batched forward
+        # TODO change validation step
+        # TODO add offset network
+        # TODO check neuman for other details to implement
+
+        ###########################################################################
+        # Silhouette loss, world space
+        ###########################################################################
+
         silhouettes_at_rays = sample_images_at_mc_locs(
-            # target_silhouettes[batch_idx, ..., None],
             silhouettes.unsqueeze(-1),
             sampled_rays.xys
         )
         assert silhouettes_at_rays.isnan().any() == False
 
-        # sil_err = huber(
-        #     rendered_silhouettes,
-        #     silhouettes_at_rays,
-        # ).abs().mean()
         sil_err = self.loss_func(
             rendered_silhouettes,
             silhouettes_at_rays,
@@ -254,26 +223,23 @@ class HandModel(L.LightningModule):
             sil_loss_factor = 0
         sil_err = sil_err * sil_loss_factor
 
-        # Compute the color error as the mean huber
-        # loss between the rendered colors and the
-        # sampled target images.
+        ###########################################################################
+        # Color loss
+        ###########################################################################
+
         colors_at_rays = sample_images_at_mc_locs(
-            # target_images[batch_idx],
             images,
             sampled_rays.xys
         )
         assert colors_at_rays.isnan().any() == False
 
-        # color_err = huber(
-        #     rendered_images,
-        #     colors_at_rays,
-        # ).abs().mean()
-        # calculate color error as MSE
         color_err = self.loss_func(
             rendered_images,
             colors_at_rays,
         )
         assert color_err.isnan() == False
+
+        ###########################################################################
 
         # Log the errors.
         self.log('color_loss', color_err, prog_bar=True, logger=True)
@@ -365,35 +331,8 @@ class HandModel(L.LightningModule):
         return concat_rendered
 
     def get_nerf_output(self, points, directions):
-        # ray_bundle = self.raysampler_canonical.forward(
-        #     camera,
-        #     min_depth = 0.1,
-        #     max_depth = 1,
-        #     n_pts_per_ray = 96,
-        #     stratified_sampling = False,
-        # )
-        # print('ray_bundle', ray_bundle)
-
-        # from pytorch3d.renderer import (
-        #     FoVPerspectiveCameras,
-        #     NDCMultinomialRaysampler,
-        #     MonteCarloRaysampler,
-        #     EmissionAbsorptionRaymarcher,
-        #     ImplicitRenderer,
-        #     RayBundle,
-        #     ray_bundle_to_ray_points,
-        # )
-
-        # print('points', ray_bundle_to_ray_points(ray_bundle).shape)
-        # print('directions', ray_bundle.directions.shape)
-        # exit()
-
-        ray_densities, ray_colors = self.neural_radiance_field.forward_points(
+        ray_densities, ray_colors = self.neural_radiance_field.forward(
             points,
             directions,
-            vertices=None,
-            Ts=None,
-            warp_rays=False,
-            n_batches=12
         )
         return ray_densities, ray_colors

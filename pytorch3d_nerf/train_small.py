@@ -73,7 +73,11 @@ if __name__ == '__main__':
     # print(model.raysampler_mc.min_depth)
 
     output_dir = '/home/azhuavlev/Desktop/Results/neuman_custom/'
-    logger = TensorBoardLogger(output_dir, version='small_warp_clipped_sil_loss_99999_lr_99999_mask_0.3_dilation_10_sampling_8192_32_depth_105_huber')
+    logger = TensorBoardLogger(
+        output_dir,
+        # version='small_warp_clipped_sil_loss_99999_lr_99999_mask_0.3_dilation_10_sampling_8192_32_depth_105_huber'
+        version='test_sampling'
+    )
     # checkpoint_callback = ModelCheckpoint(save_top_k=5, monitor="epoch", mode='max', every_n_epochs=1)
 
     trainer = L.Trainer(

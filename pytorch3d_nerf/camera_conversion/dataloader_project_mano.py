@@ -77,7 +77,8 @@ from pytorch3d.transforms.so3 import so3_exponential_map, so3_log_map
 import matplotlib.pyplot as plt
 from mano_custom import mano_pytorch3d
 from pytorch3d.utils.camera_conversions import cameras_from_opencv_projection
-from test_interhand_render_pnp import render_mesh, render_point_cloud
+from render_utils.render_mesh import render_mesh
+from tqdm import tqdm
 
 
 if __name__ == '__main__':
@@ -108,20 +109,21 @@ if __name__ == '__main__':
     hand_model = mano_pytorch3d.create_mano_custom(return_right_hand=False)
 
     max_iter = 100
-    for i, batch in enumerate(full_loader):
+    for i, batch in tqdm(enumerate(full_loader)):
         if i > max_iter:
             break
 
         camera_params, images, silhouettes, manos = batch
 
         with torch.no_grad():
-            mano_output = hand_model.forward(
+            mesh = hand_model.forward_pytorch3d(
                 betas=manos['shape'],
                 global_orient=manos['root_pose'],
                 hand_pose=manos['hand_pose'],
                 transl=manos['trans'],
-            )
-        mesh = mano_output.vertices.to(device)
+            ).to(device)
+
+        # mesh = mano_output.vertices.to(device)
 
         # print(mesh)
         # exit()
@@ -131,9 +133,16 @@ if __name__ == '__main__':
         focal = camera_params['focal'].to(device)
         princpt = camera_params['princpt'].to(device)
 
+        cameras = PerspectiveCameras(focal_length=focal,
+                                     principal_point=princpt,
+                                     device=device,
+                                     in_ndc=False,
+                                     image_size=((512, 334),),
+                                     )
+
         with torch.no_grad():
-            render_rgb, render_depth = render_mesh(mesh, face, {'focal': focal, 'princpt': princpt},
-                                                          (512, 334), 'left')
+            render_rgb, render_depth = render_mesh(mesh, face, cameras)
+            #{'focal': focal, 'princpt': princpt}, (512, 334), 'left')
         # blend
         render_rgb = render_rgb[0].cpu().numpy()
         render_depth = render_depth[0].cpu().numpy()

@@ -16,14 +16,15 @@ from mano_custom.smpl_custom import lbs as lbs_custom
 def create_mano_custom(
         return_right_hand: bool,
 ):
-    # keep flat_hand_mean=False, in images it is the only way
-    left_hand = MANOCustom(
+    # keep flat_hand_mean=False, in images it is the only way.
+    # Confirmed by running dataloader_project_mano.py
+    left_hand = _MANOCustom(
         model_path='/home/azhuavlev/Desktop/Data/models/mano/MANO_LEFT.pkl',
         is_rhand=False,
         use_pca=False,
         flat_hand_mean=False
     )
-    right_hand = MANOCustom(
+    right_hand = _MANOCustom(
         model_path='/home/azhuavlev/Desktop/Data/models/mano/MANO_RIGHT.pkl',
         is_rhand=True,
         use_pca=False,
@@ -42,11 +43,11 @@ def create_mano_custom(
 
 
 
-class MANOCustom(smplx.MANO):
+class _MANOCustom(smplx.MANO):
     def __init__(self, **kwargs):
-        super(MANOCustom, self).__init__(**kwargs)
+        super(_MANOCustom, self).__init__(**kwargs)
 
-    def verts_transformations_pytorch3d(
+    def verts_transformations_xyz(
             self,
             betas,
             global_orient,
@@ -106,3 +107,12 @@ class MANOCustom(smplx.MANO):
         # reverse x- and y-axis following PyTorch3D axis direction
         return torch.stack((-verts[:, :, 0], -verts[:, :, 1], verts[:, :, 2]),
                             2)
+
+    def get_flat_hand_vertices_pytorch3d(self, device):
+        zero_pose_hand = self.forward_pytorch3d(
+            betas = torch.zeros(1, 10, device=device),
+            global_orient = -self.pose_mean[:3].unsqueeze(0),
+            hand_pose = -self.pose_mean[3:].unsqueeze(0),
+            transl = torch.zeros(1, 3, device=device),
+        )
+        return zero_pose_hand

@@ -56,9 +56,11 @@ def sample_images_at_mc_locs(target_images, sampled_rays_xy):
         -sampled_rays_xy.view(ba, -1, 1, 2),  # note the sign inversion
         align_corners=True
     )
-    return images_sampled.permute(0, 2, 3, 1).view(
+    output = images_sampled.permute(0, 2, 3, 1).view(
         ba, *spatial_size, dim
     )
+
+    return output
 
 
 def show_full_render(

@@ -61,6 +61,8 @@ from mano_custom import mano_pytorch3d
 from pytorch3d.utils.camera_conversions import cameras_from_opencv_projection
 
 def render_mesh(mesh, face, cameras):
+    device = mesh.device
+
     batch_size, vertex_num = mesh.shape[:2]
 
     textures = TexturesVertex(verts_features=torch.ones((batch_size, vertex_num, 3)).float().to(device))
@@ -131,6 +133,12 @@ if __name__ == '__main__':
 
         # TODO is dataloader the issue?
         camera_params, images, silhouettes, manos = i
+
+        print(manos['shape'].shape,
+            manos['root_pose'].shape,
+            manos['hand_pose'].shape,
+            manos['trans'].shape,)
+        exit()
 
         verts_orig = hand_model.forward(
             betas=manos['shape'],

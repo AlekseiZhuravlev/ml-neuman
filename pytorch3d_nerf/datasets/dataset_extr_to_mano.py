@@ -129,7 +129,7 @@ class NeumanDataset(torch.utils.data.Dataset):
 
             root_pose, hand_pose, shape, trans = self.apply_extr_to_mano(mano, hand_model, j_curr_item)
 
-            _, Ts_xyz = hand_model.verts_transformations_pytorch3d(
+            _, Ts_xyz = hand_model.verts_transformations_xyz(
                 betas=shape,
                 global_orient=root_pose,
                 hand_pose=hand_pose,
