@@ -129,13 +129,17 @@ class NeumanDataset(torch.utils.data.Dataset):
 
             root_pose, hand_pose, shape, trans = self.apply_extr_to_mano(mano, hand_model, j_curr_item)
 
-            _, Ts_xyz = hand_model.verts_transformations_xyz(
+            verts_zero_pose_xyz, Ts_xyz = hand_model.verts_transformations_xyz(
                 betas=shape,
                 global_orient=root_pose,
                 hand_pose=hand_pose,
                 transl=trans
             )
-
+            verts_zero_pose_py3d = torch.stack(
+                (-verts_zero_pose_xyz[:, :, 0],
+                 -verts_zero_pose_xyz[:, :, 1],
+                 verts_zero_pose_xyz[:, :, 2]),
+                2)
             vertices_py3d = hand_model.forward_pytorch3d(
                 betas=shape,
                 global_orient=root_pose,
@@ -157,6 +161,7 @@ class NeumanDataset(torch.utils.data.Dataset):
                 'shape': shape.squeeze(0),
                 'trans':trans.squeeze(0),
                 'verts': vertices_py3d.squeeze(0),
+                'verts_zero': verts_zero_pose_py3d.squeeze(0),
                 'Ts': Ts_xyz.squeeze(0),
                 # 'joints': joints,
             }

@@ -59,6 +59,7 @@ def sample_images_at_mc_locs(target_images, sampled_rays_xy):
     output = images_sampled.permute(0, 2, 3, 1).view(
         ba, *spatial_size, dim
     )
+    assert output.isnan().any() == False
 
     return output
 

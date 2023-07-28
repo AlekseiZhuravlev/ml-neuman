@@ -154,14 +154,18 @@ class NeuralRadianceField(torch.nn.Module):
         in world coordinates.
         """
         # Normalize the ray_directions to unit l2 norm.
+
+        # TODO disabled directions
         rays_directions_normed = torch.nn.functional.normalize(
             rays_directions, dim=-1
         )
 
         # Obtain the harmonic embedding of the normalized ray directions.
-        rays_embedding = self.harmonic_embedding(
+        rays_embedding = self.harmonic_embedding.forward(
             rays_directions_normed
         )
+
+        rays_embedding = torch.zeros_like(rays_embedding)
 
         # Concatenate ray direction embeddings with
         # features and evaluate the color model.
@@ -191,7 +195,7 @@ class NeuralRadianceField(torch.nn.Module):
         """
 
         # For each 3D world coordinate, we obtain its harmonic embedding.
-        embeds = self.harmonic_embedding(
+        embeds = self.harmonic_embedding.forward(
             ray_points
         )
         # embeds.shape = [minibatch x ... x self.n_harmonic_functions*6]
@@ -212,67 +216,34 @@ class NeuralRadianceField(torch.nn.Module):
 
     def batched_forward(
             self,
-            ray_bundle: RayBundle,
+            ray_points,
+            ray_directions,
             n_batches: int = 16,
-            **kwargs,
     ):
         """
-        This function is used to allow for memory efficient processing
-        of input rays. The input rays are first split to `n_batches`
-        chunks and passed through the `self.forward` function one at a time
-        in a for loop. Combined with disabling PyTorch gradient caching
-        (`torch.no_grad()`), this allows for rendering large batches
-        of rays that do not all fit into GPU memory in a single forward pass.
-        In our case, batched_forward is used to export a fully-sized render
-        of the radiance field for visualization purposes.
-
         Args:
-            ray_bundle: A RayBundle object containing the following variables:
-                origins: A tensor of shape `(minibatch, ..., 3)` denoting the
-                    origins of the sampling rays in world coords.
-                directions: A tensor of shape `(minibatch, ..., 3)`
-                    containing the direction vectors of sampling rays in world coords.
-                lengths: A tensor of shape `(minibatch, ..., num_points_per_ray)`
-                    containing the lengths at which the rays are sampled.
-            n_batches: Specifies the number of batches the input rays are split into.
-                The larger the number of batches, the smaller the memory footprint
-                and the lower the processing speed.
-
+            ray_points: torch.Size([1, 8192, 1, 32, 3])
+            ray_directions: torch.Size([1, 8192, 1, 32, 3])
+            n_batches: int = 16
         Returns:
             rays_densities: A tensor of shape `(minibatch, ..., num_points_per_ray, 1)`
                 denoting the opacity of each ray point.
             rays_colors: A tensor of shape `(minibatch, ..., num_points_per_ray, 3)`
                 denoting the color of each ray point.
-
         """
-        # TODO this needs to be modified
+        batches_ray_points = torch.chunk(ray_points, chunks=n_batches, dim=1)
+        batches_ray_directions = torch.chunk(ray_directions, chunks=n_batches, dim=1)
 
-        # Parse out shapes needed for tensor reshaping in this function.
-        n_pts_per_ray = ray_bundle.lengths.shape[-1]
-        spatial_size = [*ray_bundle.origins.shape[:-1], n_pts_per_ray]
+        # For each batch, execute the standard forward pass and concatenate
+        rays_densities = torch.tensor([], device=ray_points.device)
+        rays_colors = torch.tensor([], device=ray_points.device)
 
-        # Split the rays to `n_batches` batches.
-        tot_samples = ray_bundle.origins.shape[:-1].numel()
-        batches = torch.chunk(torch.arange(tot_samples), n_batches)
+        for batch_idx in range(len(batches_ray_points)):
+            rays_densities_batch, rays_colors_batch = self.forward(
+                ray_points=batches_ray_points[batch_idx],
+                ray_directions=batches_ray_directions[batch_idx],
+            )
+            rays_densities = torch.cat([rays_densities, rays_densities_batch], dim=1)
+            rays_colors = torch.cat([rays_colors, rays_colors_batch], dim=1)
 
-        # For each batch, execute the standard forward pass.
-        batch_outputs = [
-            self.forward(
-                RayBundle(
-                    origins=ray_bundle.origins.view(-1, 3)[batch_idx],
-                    directions=ray_bundle.directions.view(-1, 3)[batch_idx],
-                    lengths=ray_bundle.lengths.view(-1, n_pts_per_ray)[batch_idx],
-                    xys=None,
-                ),
-                **kwargs,
-            ) for batch_idx in batches
-        ]
-
-        # Concatenate the per-batch rays_densities and rays_colors
-        # and reshape according to the sizes of the inputs.
-        rays_densities, rays_colors = [
-            torch.cat(
-                [batch_output[output_i] for batch_output in batch_outputs], dim=0
-            ).view(*spatial_size, -1) for output_i in (0, 1)
-        ]
         return rays_densities, rays_colors

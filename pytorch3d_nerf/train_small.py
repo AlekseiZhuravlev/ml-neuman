@@ -36,8 +36,9 @@ import lighning_models
 import lightning as L
 from lightning.pytorch.loggers import TensorBoardLogger
 
-import nerf_original
-import nerf
+from nerf_models import nerf_small_warp
+from lightning.pytorch.strategies import DDPStrategy
+
 
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -50,8 +51,8 @@ if __name__ == '__main__':
 
     # use 80% of the data for training, randomize the order
     np.random.shuffle(all_ids)
-    train_ids = all_ids[:int(0.6 * len(all_ids))]
-    test_ids = all_ids[int(0.6 * len(all_ids)):]
+    train_ids = all_ids[int(0.3 * len(all_ids)):]
+    test_ids = all_ids[:int(0.3 * len(all_ids))]
     print(test_ids)
 
     train_dataset = dataset_extr_to_mano.NeumanDataset(data_path, train_ids)
@@ -66,9 +67,9 @@ if __name__ == '__main__':
     full_loader = DataLoader(full_dataset, batch_size=batch_size, shuffle=False, num_workers=5)
 
     # initialize nerf model
-    nerf = nerf.NeuralRadianceField()
+    nerf = nerf_small_warp.NeuralRadianceField()
 
-    model = lighning_models.HandModel(dataset=full_loader, nerf_model=nerf)
+    model = lighning_models.HandModel(nerf_model=nerf)
 
     # print(model.raysampler_mc.min_depth)
 
@@ -76,7 +77,8 @@ if __name__ == '__main__':
     logger = TensorBoardLogger(
         output_dir,
         # version='small_warp_clipped_sil_loss_99999_lr_99999_mask_0.3_dilation_10_sampling_8192_32_depth_105_huber'
-        version='test_sampling'
+        # version='testCanLoss_silFactor_1_canFactor_1_canCam_2_canLoss_huber_silLoss_huber_opacity_-1_noDir'
+        version='testCanLoss_CanLossOnly_5_cam_randomCam_noDir_fixedZeroVerts'
     )
     # checkpoint_callback = ModelCheckpoint(save_top_k=5, monitor="epoch", mode='max', every_n_epochs=1)
 
@@ -85,12 +87,13 @@ if __name__ == '__main__':
         benchmark=True,
         logger=logger,
         default_root_dir=output_dir,
-        check_val_every_n_epoch=200,
+        check_val_every_n_epoch=100,
         log_every_n_steps=20,
         callbacks=[
             # checkpoint_callback,
             # stats_monitor,
         ],
+        strategy=DDPStrategy(find_unused_parameters=True),
     )
     trainer.fit(
         model,

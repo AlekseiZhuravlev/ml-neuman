@@ -17,8 +17,8 @@ from pytorch3d.renderer import (
     PointsRasterizationSettings,
 )
 
-def render_point_cloud(verts, features, cameras):
-    device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+def render_point_cloud(verts, features, cameras, no_grad, background_color):
+    device = verts.device
 
     mesh = Pointclouds(points=verts, features=features)
 
@@ -30,12 +30,16 @@ def render_point_cloud(verts, features, cameras):
     rasterizer = PointsRasterizer(cameras=cameras, raster_settings=raster_settings).to(device)
     renderer = PointsRenderer(
         rasterizer=rasterizer,
-        compositor=AlphaCompositor(background_color=(1, 1, 1))
+        compositor=AlphaCompositor(background_color=background_color)
     )
     # render
-    with torch.no_grad():
-        images = renderer(mesh)
-        images = images[:, :, :, :3] # * 255
-        depthmaps = images.max(dim=-1)[0].unsqueeze(-1)
+    if no_grad:
+        with torch.no_grad():
+            images_depths = renderer(mesh)
+    else:
+        images_depths = renderer(mesh)
+
+    depthmaps = images_depths[:, :, :, 3].unsqueeze(-1)
+    images = images_depths[:, :, :, :3] # * 255
 
     return images, depthmaps

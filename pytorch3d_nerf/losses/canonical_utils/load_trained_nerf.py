@@ -35,7 +35,7 @@ from tqdm import tqdm
 from datasets import dataset_extr_to_mano, dataset_canonical_space
 import lighning_models
 
-import nerf
+import nerf_models.nerf_small_both_warp as nerf
 from nerf_models import nerf_big_no_warp
 
 
@@ -62,9 +62,7 @@ def load_small_nerf():
 
     ckpt_path = '/home/azhuavlev/Desktop/Results/neuman_custom/lightning_logs/small_warp_clipped_sil_loss_99999_lr_99999_mask_0.3_dilation_10_sampling_8192_32_depth_105_huber/checkpoints/epoch=4999-step=180000.ckpt'
 
-    model = lighning_models.HandModel(dataset=full_loader, nerf_model=field).load_from_checkpoint(ckpt_path,
-                                                                                                  dataset=full_loader,
-                                                                                                  nerf_model=field)
+    model = lighning_models.HandModel(nerf_model=field).load_from_checkpoint(ckpt_path, nerf_model=field)
     model = model.to('cuda')
 
     return model

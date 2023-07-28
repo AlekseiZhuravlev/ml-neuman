@@ -79,6 +79,36 @@ def warp_points(
     return can_pts_py3d, can_dirs_py3d
 
 
+def warp_points_batched(
+        rays_points_world,
+        vertices,
+        Ts,
+        n_batches: int = 16,
+    ):
+        """
+        Args:
+            ray_points: torch.Size([1, 8192, 1, 32, 3])
+            ray_directions: torch.Size([1, 8192, 1, 32, 3])
+            n_batches: int = 16
+        """
+        batches_ray_points = torch.chunk(rays_points_world, chunks=n_batches, dim=1)
+
+        # For each batch, execute the standard forward pass and concatenate
+        can_pts_py3d = torch.tensor([], device=rays_points_world.device)
+        can_dirs_py3d = torch.tensor([], device=rays_points_world.device)
+
+        for batch_idx in range(len(batches_ray_points)):
+            can_pts_py3d_batch, can_dirs_py3d_batch = warp_points(
+                rays_points_world=batches_ray_points[batch_idx],
+                vertices=vertices,
+                Ts=Ts,
+            )
+            can_pts_py3d = torch.cat([can_pts_py3d, can_pts_py3d_batch], dim=1)
+            can_dirs_py3d = torch.cat([can_dirs_py3d, can_dirs_py3d_batch], dim=1)
+
+        return can_pts_py3d, can_dirs_py3d
+
+
 
 def warp_points_debug(
         rays_points_world,

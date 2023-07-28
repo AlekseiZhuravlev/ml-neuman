@@ -16,7 +16,7 @@ sys.path.append("/home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf")
 from mano_custom import mano_pytorch3d
 from render_utils.render_mesh import render_mesh
 from render_utils.render_point_cloud import render_point_cloud
-from losses.load_trained_nerf import load_small_nerf, get_random_batch
+from losses.canonical_utils.load_trained_nerf import load_small_nerf, get_random_batch
 
 def get_cow_R_T():
     cow_provider = RenderedMeshDatasetMapProvider(
@@ -141,7 +141,7 @@ def render_nerf_point_cloud(cameras):
         for i in tqdm(range(0, points.shape[2], 1000000)):
             points_batch = points[:, :, i:i + 1000000, :, :].to('cuda')
             directions_batch = directions[:, :, i:i + 1000000, :].to('cuda')
-            rays_densities_batch, rays_colors_batch = model.get_nerf_output(points_batch, directions_batch)
+            rays_densities_batch, rays_colors_batch = model.get_nerf_output_legacy(points_batch, directions_batch)
 
             rays_densities = torch.cat((rays_densities, rays_densities_batch), dim=2)
             rays_colors = torch.cat((rays_colors, rays_colors_batch), dim=2)
@@ -167,7 +167,7 @@ def render_nerf_point_cloud(cameras):
     points_reshaped = points_reshaped.repeat(n_cameras, 1, 1)
     rays_colors_rgba = rays_colors_rgba.repeat(n_cameras, 1, 1)
 
-    img, depth = render_point_cloud(points_reshaped, rays_colors_rgba, cameras)
+    img, depth = render_point_cloud(points_reshaped, rays_colors_rgba, cameras, True, background_color=(1, 1, 1))
     return img, depth
 
 
@@ -177,15 +177,20 @@ if __name__ == '__main__':
     n_cameras = 10
     cameras = create_canonical_cameras(n_cameras, device)
 
+    # print(len(cameras))
+    # exit()
+
     img_zero_pose, depth_zero_pose = render_zero_pose(cameras)
     img_nerf_point_cloud, depth_nerf_point_cloud = render_nerf_point_cloud(cameras)
 
     target_opacity = depth_zero_pose > 0
     loss = nn.MSELoss(reduction='mean')(depth_nerf_point_cloud, target_opacity)
     print('loss', loss)
-    exit(0)
+    # exit(0)
 
     print('depth_nerf_point_cloud', depth_nerf_point_cloud)
+
+    # depth_nerf_point_cloud = (depth_nerf_point_cloud > 0).float()
 
     blended_imgs = torch.tensor([], device='cuda')
     for i in range(10):
@@ -214,19 +219,19 @@ if __name__ == '__main__':
 
     # make grid of images and save them
     grid = torchvision.utils.make_grid(img, nrow=10)
-    torchvision.utils.save_image(grid, "/home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf/losses/pcloud_mesh_grid_img_zero.png")
+    torchvision.utils.save_image(grid, "/home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf/losses/canonical_utils/images/pcloud_mesh_grid_img_zero.png")
 
     # make depth 3 channels
     depth = depth.repeat(1, 1, 1, 3)
     depth = depth.permute(0, 3, 1, 2)
     # make grid of depth maps and save them
     grid = torchvision.utils.make_grid(depth, nrow=10)
-    torchvision.utils.save_image(grid, "/home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf/losses/pcloud_mesh_grid_depth_zero.png")
+    torchvision.utils.save_image(grid, "/home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf/losses/canonical_utils/images/pcloud_mesh_grid_depth_zero.png")
 
     # make grid of blended images and save them
     blended_imgs = blended_imgs.permute(0, 3, 1, 2)
     grid = torchvision.utils.make_grid(blended_imgs, nrow=10)
-    torchvision.utils.save_image(grid, "/home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf/losses/pcloud_mesh_grid_blended_zero.png")
+    torchvision.utils.save_image(grid, "/home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf/losses/canonical_utils/images/pcloud_mesh_grid_blended_zero.png")
 
 
 

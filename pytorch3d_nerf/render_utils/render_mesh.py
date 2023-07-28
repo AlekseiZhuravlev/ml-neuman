@@ -12,7 +12,7 @@ MeshRendererWithFragments,
 MeshRasterizer,
 TexturesVertex)
 
-def render_mesh(mesh, face, cameras):
+def render_mesh(mesh, face, cameras, no_grad):
     device = mesh.device
 
     batch_size, vertex_num = mesh.shape[:2]
@@ -31,12 +31,17 @@ def render_mesh(mesh, face, cameras):
         specular_color=((0.0, 1.0, 0.0),),
         shininess=0
     )
+    renderer = MeshRendererWithFragments(rasterizer=rasterizer, shader=shader)
 
     # render
-    with torch.no_grad():
-        renderer = MeshRendererWithFragments(rasterizer=rasterizer, shader=shader)
+    if no_grad:
+        with torch.no_grad():
+            images, fragments = renderer(mesh, materials=materials)
+    else:
         images, fragments = renderer(mesh, materials=materials)
-        images = images[:, :, :, :3] #* 255
-        depthmaps = fragments.zbuf
+
+    images = images[:, :, :, :3] #* 255
+    depthmaps = fragments.zbuf
+
 
     return images, depthmaps
