@@ -78,7 +78,7 @@ if __name__ == '__main__':
         output_dir,
         # version='small_warp_clipped_sil_loss_99999_lr_99999_mask_0.3_dilation_10_sampling_8192_32_depth_105_huber'
         # version='testCanLoss_silFactor_1_canFactor_1_canCam_2_canLoss_huber_silLoss_huber_opacity_-1_noDir'
-        version='testCanLoss_CanLossOnly_5_cam_randomCam_noDir_fixedZeroVerts'
+        version='testCanLoss_new_fixed_cameras'
     )
     # checkpoint_callback = ModelCheckpoint(save_top_k=5, monitor="epoch", mode='max', every_n_epochs=1)
 

@@ -32,13 +32,15 @@ def get_look_at_view_R_T(n_cameras, random_cameras, device):
 
 def create_canonical_cameras(n_cameras, random_cameras, device):
     Rs, Ts = get_look_at_view_R_T(n_cameras, random_cameras, device)
+    # image_sizes = torch.tensor([[512.0, 334.0]], device=device).repeat(n_cameras, 1)
 
     batch_cameras = FoVPerspectiveCameras(
         R=Rs,
         T=Ts,
         znear=0.01,
         zfar=10,
-        device=device
+        device=device,
+        # image_size=image_sizes
     )
     return batch_cameras
 

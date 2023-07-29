@@ -17,6 +17,7 @@ from mano_custom import mano_pytorch3d
 from render_utils.render_mesh import render_mesh
 from render_utils.render_point_cloud import render_point_cloud
 from losses.canonical_utils.load_trained_nerf import load_small_nerf, get_random_batch
+from cameras_canonical import create_canonical_cameras
 
 def get_cow_R_T():
     cow_provider = RenderedMeshDatasetMapProvider(
@@ -63,17 +64,17 @@ def get_so3_R_T():
     Ts[:, 2] = 0.3
     return Rs, Ts
 
-def create_canonical_cameras(n_cameras, device):
-    Rs, Ts = get_look_at_view_R_T(n_cameras)
-
-    batch_cameras = FoVPerspectiveCameras(
-        R=Rs,
-        T=Ts,
-        znear=0.01,
-        zfar=10,
-        device=device
-    )
-    return batch_cameras
+# def create_canonical_cameras(n_cameras, device):
+#     Rs, Ts = get_look_at_view_R_T(n_cameras)
+#
+#     batch_cameras = FoVPerspectiveCameras(
+#         R=Rs,
+#         T=Ts,
+#         znear=0.01,
+#         zfar=10,
+#         device=device
+#     )
+#     return batch_cameras
 
 def render_zero_pose(cameras):
     # n_cameras = 10
@@ -98,11 +99,11 @@ def render_zero_pose(cameras):
     faces = torch.from_numpy(hand_model.faces.astype(np.int32))[None, :, :].to(device)
 
     # copy verts_py3d into 1st dimension of batch, number = 10
-    verts_py3d = verts_py3d.repeat(n_cameras, 1, 1)
+    verts_py3d_repeated = verts_py3d.repeat(n_cameras, 1, 1)
     faces = faces.repeat(n_cameras, 1, 1)
 
-    img, depth = render_mesh(verts_py3d, faces, cameras)
-    return img, depth
+    img, depth = render_mesh(verts_py3d_repeated, faces, cameras, no_grad=True)
+    return img, depth, verts_py3d
 
     # switch n of channels in img
     # img = img.permute(0, 3, 1, 2)
@@ -164,24 +165,51 @@ def render_nerf_point_cloud(cameras):
     # n_cameras = 10
     # cameras = create_canonical_cameras(n_cameras, device)
 
-    points_reshaped = points_reshaped.repeat(n_cameras, 1, 1)
+    points_repeated= points_reshaped.repeat(n_cameras, 1, 1)
     rays_colors_rgba = rays_colors_rgba.repeat(n_cameras, 1, 1)
 
-    img, depth = render_point_cloud(points_reshaped, rays_colors_rgba, cameras, True, background_color=(1, 1, 1))
-    return img, depth
+    img, depth = render_point_cloud(points_repeated, rays_colors_rgba, cameras, True, background_color=(1, 1, 1))
+    return img, depth, points_reshaped
 
 
 if __name__ == '__main__':
     device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 
     n_cameras = 10
-    cameras = create_canonical_cameras(n_cameras, device)
+    cameras = create_canonical_cameras(n_cameras, random_cameras=False, device=device)
 
     # print(len(cameras))
     # exit()
 
-    img_zero_pose, depth_zero_pose = render_zero_pose(cameras)
-    img_nerf_point_cloud, depth_nerf_point_cloud = render_nerf_point_cloud(cameras)
+    print(cameras.get_image_size())
+
+    img_zero_pose, depth_zero_pose, verts_zpose = render_zero_pose(cameras)
+    img_nerf_point_cloud, depth_nerf_point_cloud, points_nerf = render_nerf_point_cloud(cameras)
+
+
+    xy_pts = cameras.transform_points_screen(points_nerf, image_size=(512, 334))[:, :, :2]
+    xy_verts = cameras.transform_points_screen(verts_zpose, image_size=(512, 334))[:, :, :2]
+
+    # plot xy[0]
+    import matplotlib.pyplot as plt
+
+    # make n_cameras copies subplots
+    fig, axs = plt.subplots(n_cameras, 1, figsize=(10, n_cameras*10))
+    for i in range(n_cameras):
+        axs[i].scatter(xy_pts[i, :, 0].cpu(), xy_pts[i, :, 1].cpu(), s=0.1)
+        axs[i].scatter(xy_verts[i, :, 0].cpu(), xy_verts[i, :, 1].cpu(), s=0.1)
+    plt.savefig('/home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf/losses/canonical_utils/images/xy.png')
+    exit(0)
+
+    # plot points on xy locations, colors given by rays_colors_rgba
+    img = torch.zeros((1, 334, 512, 3), device='cuda')
+    depth = torch.zeros((1, 334, 512, 1), device='cuda')
+
+
+    exit()
+
+
+
 
     target_opacity = depth_zero_pose > 0
     loss = nn.MSELoss(reduction='mean')(depth_nerf_point_cloud, target_opacity)

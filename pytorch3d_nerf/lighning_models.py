@@ -44,16 +44,16 @@ class HandModel(L.LightningModule):
         super().__init__()
 
         self.hand_model = mano_pytorch3d.create_mano_custom(return_right_hand=False)
-        self.register_buffer(
-            'faces',
-            torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :]
-        )
-
-        # TODO this is not 100% accurate, but it's close enough
-        self.register_buffer(
-            'verts_zero_pose',
-            self.hand_model.get_flat_hand_vertices_pytorch3d(self.device)
-        )
+        # self.register_buffer(
+        #     'faces',
+        #     torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :]
+        # )
+        #
+        # # TODO this is not 100% accurate, but it's close enough
+        # self.register_buffer(
+        #     'verts_zero_pose',
+        #     self.hand_model.get_flat_hand_vertices_pytorch3d(self.device)
+        # )
 
         self.min_depth = 0.1
         self.max_depth = 2
@@ -113,16 +113,24 @@ class HandModel(L.LightningModule):
             max_epochs=999000,
         )
 
+    def on_fit_start(self):
+
         self.sil_loss_can = SilhouetteLossCanonical(
             n_cameras=5,
+            verts_zero_pose=self.hand_model.get_flat_hand_vertices_pytorch3d(self.device),
+            faces=torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :].to(self.device),
             loss_func=huber.huber,
             # loss_func=nn.MSELoss(),
             sil_loss_start_factor=1,
             sil_loss_epochs=999000,
+            device=self.device,
         )
+        self.sil_loss_can.to(self.device)
+
 
     def configure_optimizers(self):
-        lr = 5e-4
+        # lr = 5e-4
+        lr = 5e-3
         optimizer = torch.optim.Adam(self.neural_radiance_field.parameters(), lr=lr)
 
         # Following the original code, we use exponential decay of the
@@ -227,8 +235,6 @@ class HandModel(L.LightningModule):
             ray_points_can,
             rays_densities,
             rays_features,
-            self.verts_zero_pose,
-            self.faces,
             self.current_epoch,
         )
 

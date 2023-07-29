@@ -4,18 +4,71 @@ from helpers import sample_images_at_mc_locs
 from losses.canonical_utils.cameras_canonical import create_canonical_cameras
 from losses.canonical_utils.render_canonical import RendererCanonical
 import torchvision
+import lightning as L
 
 
-class SilhouetteLossCanonical(nn.Module):
-    def __init__(self, n_cameras, loss_func, sil_loss_start_factor, sil_loss_epochs):
+class SilhouetteLossCanonical(L.LightningModule):
+    def __init__(self, n_cameras, verts_zero_pose, faces, loss_func, sil_loss_start_factor, sil_loss_epochs, device):
         super().__init__()
 
         self.n_cameras = n_cameras
+        self.verts_zero = verts_zero_pose
+
         self.loss_func = loss_func
         self.sil_loss_start_factor = sil_loss_start_factor
         self.sil_loss_epochs = sil_loss_epochs
 
-        self.renderer = RendererCanonical()
+        # self.register_buffer(
+        #     'cameras',
+        #     create_canonical_cameras(self.n_cameras, random_cameras=False, device=verts_zero_pose.device)
+        # )
+        self.cameras = create_canonical_cameras(self.n_cameras, random_cameras=False, device=device)
+
+        self.renderer = RendererCanonical(self.cameras)
+
+        print(self.device)
+        # print('renderer.device', self.renderer.device)
+        # print('self.cameras.device', self.cameras.device)
+        # print('verts_zero_pose.device', verts_zero_pose.device)
+        # print('faces.device', faces.device)
+        silhouettes_zero_pose = self.renderer.render_zero_pose_sil(
+            verts_zero_pose,
+            faces
+        )
+        self.register_buffer(
+            'silhouettes_zero_pose',
+            silhouettes_zero_pose
+        )
+
+    def forward(self,
+                rays_points_can,
+                rays_densities,
+                rays_features,
+                current_epoch,
+                ):
+
+        # print('self.cameras.device', self.cameras.device)
+
+        img_nerf_point_cloud, depth_nerf_point_cloud = self.renderer.render_nerf_point_cloud(
+            rays_points_can,
+            rays_densities,
+            rays_features
+        )
+        # print('depth_nerf_point_cloud.shape', depth_nerf_point_cloud.shape)
+        sil_err_unconstrained = self.loss_func(depth_nerf_point_cloud, self.silhouettes_zero_pose)
+        # print('sil_err_unconstrained', sil_err_unconstrained)
+        # exit()
+
+        # decrease silhouette loss and update the factor
+        if self.sil_loss_epochs > 0:
+            sil_loss_factor = self.sil_loss_start_factor * max(0, 1 - (current_epoch / self.sil_loss_epochs))
+        else:
+            sil_loss_factor = 0
+        sil_err = sil_err_unconstrained * sil_loss_factor
+
+        return sil_err, sil_err_unconstrained, sil_loss_factor
+
+
 
     def save_can_images(self, img_zero_pose, depth_zero_pose, img_nerf_point_cloud, depth_nerf_point_cloud):
 
@@ -33,41 +86,3 @@ class SilhouetteLossCanonical(nn.Module):
         torchvision.utils.save_image(grid_depth,
                                      "/home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf/losses/canonical_utils/images/grid_depths.png")
 
-    def forward(self,
-                rays_points_can,
-                rays_densities,
-                rays_features,
-                verts_zero_pose,
-                faces,
-                current_epoch,
-                ):
-
-        cameras = create_canonical_cameras(self.n_cameras, random_cameras=True, device=rays_points_can.device)
-
-        img_zero_pose, depth_zero_pose = self.renderer.render_zero_pose(
-            cameras,
-            verts_zero_pose,
-            faces
-        )
-        img_nerf_point_cloud, depth_nerf_point_cloud = self.renderer.render_nerf_point_cloud(
-            cameras,
-            rays_points_can,
-            rays_densities,
-            rays_features
-        )
-        target_opacity = (depth_zero_pose > 0).float()
-        sil_err_unconstrained = self.loss_func(depth_nerf_point_cloud, target_opacity)
-
-        # randomly save images
-        if torch.rand(1) < 0.005:
-            with torch.no_grad():
-                self.save_can_images(img_zero_pose, depth_zero_pose, img_nerf_point_cloud, depth_nerf_point_cloud)
-
-        # decrease silhouette loss and update the factor
-        if self.sil_loss_epochs > 0:
-            sil_loss_factor = self.sil_loss_start_factor * max(0, 1 - (current_epoch / self.sil_loss_epochs))
-        else:
-            sil_loss_factor = 0
-        sil_err = sil_err_unconstrained * sil_loss_factor
-
-        return sil_err, sil_err_unconstrained, sil_loss_factor
