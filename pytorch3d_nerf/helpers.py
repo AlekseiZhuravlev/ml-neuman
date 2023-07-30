@@ -27,8 +27,6 @@ from pytorch3d.structures import Volumes
 from pytorch3d.transforms import so3_exp_map
 from tqdm.notebook import tqdm
 
-from generate_cow_renders import generate_cow_renders
-from plot_image_grid import image_grid
 
 
 def sample_images_at_mc_locs(target_images, sampled_rays_xy):

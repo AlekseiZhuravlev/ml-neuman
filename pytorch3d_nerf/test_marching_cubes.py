@@ -36,7 +36,7 @@ from pytorch3d.structures import Volumes
 from pytorch3d.transforms import so3_exp_map
 from tqdm import tqdm
 
-from generate_cow_renders import generate_cow_renders
+from pytorch3d_nerf.notebooks.generate_cow_renders import generate_cow_renders
 from plot_image_grid import image_grid
 
 from helpers import *

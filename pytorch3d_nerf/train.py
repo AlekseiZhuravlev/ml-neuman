@@ -28,7 +28,7 @@ import sys
 sys.path.append("/home/azhuavlev/PycharmProjects/ml-neuman_mano")
 
 from data_io import neuman_helper
-from generate_cow_renders import generate_cow_renders
+from pytorch3d_nerf.notebooks.generate_cow_renders import generate_cow_renders
 from helpers import *
 from nerf import *
 from plot_image_grid import image_grid

@@ -12,13 +12,19 @@ import cv2
 from mano_custom import mano_pytorch3d
 from scipy import ndimage
 from pytorch3d.transforms.so3 import so3_exponential_map, so3_log_map
-
+from losses.canonical_utils.cameras_canonical import get_look_at_view_R_T
+from losses.canonical_utils.render_canonical import RendererCanonical
+from pytorch3d.renderer import (
+    look_at_view_transform,
+    FoVPerspectiveCameras,
+)
 
 
 class NeumanDataset(torch.utils.data.Dataset):
     def __init__(self, exp_dir, cap_ids):
         self.exp_dir = exp_dir
         self.cap_ids = cap_ids
+        self.hand_model = mano_pytorch3d.create_mano_custom(return_right_hand=False)
 
         self.load_cameras_interhand()
         self.load_silhouettes()
@@ -26,6 +32,8 @@ class NeumanDataset(torch.utils.data.Dataset):
         self.load_mano()
 
         self.mask_images()
+        self.create_zero_pose_silhouettes()
+
 
 
     def load_cameras_interhand(self):
@@ -34,7 +42,9 @@ class NeumanDataset(torch.utils.data.Dataset):
         self.camera_params_interhand = []
         self.camera_params_training = []
 
-        for i in self.cap_ids:
+        self.Rs_can, self.Ts_can = get_look_at_view_R_T(len(self.cap_ids), random_cameras=False, device='cpu')
+
+        for j_index, i in enumerate(self.cap_ids):
             json_file = cam_path + f'/{i:05d}.json'
             with open(json_file) as f:
                 data = json.load(f)
@@ -72,6 +82,8 @@ class NeumanDataset(torch.utils.data.Dataset):
                 self.camera_params_training.append({
                     'R_pytorch3d': R_train,
                     't_pytorch3d': t_train,
+                    'R_can': self.Rs_can[j_index],
+                    't_can': self.Ts_can[j_index],
                     'intrinsic_mat': intrinsic_mat,
                     'image_size': image_size,
                     'focal': focal,
@@ -117,7 +129,7 @@ class NeumanDataset(torch.utils.data.Dataset):
         mano_path = self.exp_dir + '/mano'
         joints_path = self.exp_dir + '/joints'
 
-        hand_model = mano_pytorch3d.create_mano_custom(return_right_hand=False)
+        hand_model = self.hand_model
 
         self.manos = []
         for j_curr_item, i_cap_id in enumerate(self.cap_ids):
@@ -207,9 +219,39 @@ class NeumanDataset(torch.utils.data.Dataset):
             silh_3ch = np.stack([self.silhouettes[i]] * 3, axis=2).astype(np.float32)
             self.images[i] = self.images[i] * silh_3ch
 
+    def create_zero_pose_silhouettes(self):
+
+        device='cuda:0' if torch.cuda.is_available() else 'cpu'
+        cameras = FoVPerspectiveCameras(
+            R=self.Rs_can,
+            T=self.Ts_can,
+            znear=0.01,
+            zfar=10,
+            device=device,
+            # image_size=image_sizes
+        )
+
+        renderer = RendererCanonical(cameras)
+
+        with torch.no_grad():
+            self.silhouettes_zero_pose = renderer.render_zero_pose_sil(
+                self.manos[0]['verts_zero'].to(device),
+                torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :].to(device)
+            )
+        self.silhouettes_zero_pose = self.silhouettes_zero_pose.cpu().squeeze(-1)
+        print('silhouettes_zero_pose.shape', self.silhouettes_zero_pose.shape)
+        # plot one silhouette
+        # import matplotlib.pyplot as plt
+        #
+        # for i in range(len(self.silhouettes_zero_pose)):
+        #     plt.figure()
+        #     plt.imshow(self.silhouettes_zero_pose[i].squeeze().cpu().numpy(), cmap='gray')
+        #     plt.savefig(f'/home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf/losses/canonical_utils/images/silhouette_zero_pose_{i}.png')
+        #     plt.close()
+        # exit()
 
     def __len__(self):
         return len(self.images)
 
     def __getitem__(self, idx):
-        return self.camera_params_training[idx], self.images[idx], self.silhouettes[idx], self.manos[idx]
+        return self.camera_params_training[idx], self.images[idx], self.silhouettes[idx], self.silhouettes_zero_pose[idx], self.manos[idx]

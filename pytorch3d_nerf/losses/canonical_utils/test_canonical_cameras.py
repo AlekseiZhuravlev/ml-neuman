@@ -17,7 +17,7 @@ from mano_custom import mano_pytorch3d
 from render_utils.render_mesh import render_mesh
 from render_utils.render_point_cloud import render_point_cloud
 from losses.canonical_utils.load_trained_nerf import load_small_nerf, get_random_batch
-from cameras_canonical import create_canonical_cameras
+from losses.canonical_utils.cameras_canonical import create_canonical_cameras
 
 def get_cow_R_T():
     cow_provider = RenderedMeshDatasetMapProvider(
@@ -77,10 +77,13 @@ def get_so3_R_T():
 #     return batch_cameras
 
 def render_zero_pose(cameras):
-    # n_cameras = 10
+    n_cameras = len(cameras)
     # cameras = create_canonical_cameras(n_cameras, device)
+    print('!!!!')
 
-    camera_params, images, silhouettes, manos = get_random_batch()
+    device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+
+    camera_params, images, silhouettes, _, manos = get_random_batch()
 
     hand_model = mano_pytorch3d.create_mano_custom(return_right_hand=False).to(device)
 
@@ -102,7 +105,7 @@ def render_zero_pose(cameras):
     verts_py3d_repeated = verts_py3d.repeat(n_cameras, 1, 1)
     faces = faces.repeat(n_cameras, 1, 1)
 
-    img, depth = render_mesh(verts_py3d_repeated, faces, cameras, no_grad=True)
+    img, depth = render_mesh(verts_py3d_repeated, faces, cameras, no_grad=False)
     return img, depth, verts_py3d
 
     # switch n of channels in img

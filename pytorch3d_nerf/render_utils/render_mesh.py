@@ -10,7 +10,9 @@ RasterizationSettings,
 MeshRenderer,
 MeshRendererWithFragments,
 MeshRasterizer,
-TexturesVertex)
+TexturesVertex,
+BlendParams
+)
 
 
 
@@ -27,7 +29,9 @@ def render_mesh(mesh, face, cameras, no_grad):
                                             perspective_correct=True)
     rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings).to(device)
     lights = PointLights(device=device)
-    shader = SoftPhongShader(device=device, cameras=cameras, lights=lights)
+
+    blend_params = BlendParams(sigma=1e-4, gamma=1e-4, background_color=(0.0, 0.0, 0.0))
+    shader = SoftPhongShader(device=device, cameras=cameras, lights=lights, blend_params=blend_params)
     materials = Materials(
         device=device,
         specular_color=((0.0, 1.0, 0.0),),

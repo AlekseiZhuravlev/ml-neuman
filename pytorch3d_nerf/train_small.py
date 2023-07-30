@@ -28,7 +28,6 @@ import sys
 sys.path.append("/home/azhuavlev/PycharmProjects/ml-neuman_mano")
 
 from helpers import *
-from plot_image_grid import image_grid
 
 from torch.utils.data import DataLoader
 from datasets import dataset_extr_to_mano
@@ -78,22 +77,22 @@ if __name__ == '__main__':
         output_dir,
         # version='small_warp_clipped_sil_loss_99999_lr_99999_mask_0.3_dilation_10_sampling_8192_32_depth_105_huber'
         # version='testCanLoss_silFactor_1_canFactor_1_canCam_2_canLoss_huber_silLoss_huber_opacity_-1_noDir'
-        version='testCanLoss_new_fixed_cameras'
+        version='testCanLoss_canSampling_lossSilCan_noCopyDirs_disabledManoGrad_disabledOtherLosses_FOVcameras_noStratified'
     )
     # checkpoint_callback = ModelCheckpoint(save_top_k=5, monitor="epoch", mode='max', every_n_epochs=1)
 
     trainer = L.Trainer(
         max_epochs=5001,
-        benchmark=True,
+        # benchmark=True,
         logger=logger,
         default_root_dir=output_dir,
-        check_val_every_n_epoch=100,
+        check_val_every_n_epoch=250,
         log_every_n_steps=20,
         callbacks=[
             # checkpoint_callback,
             # stats_monitor,
         ],
-        strategy=DDPStrategy(find_unused_parameters=True),
+        # strategy=DDPStrategy(find_unused_parameters=True),
     )
     trainer.fit(
         model,

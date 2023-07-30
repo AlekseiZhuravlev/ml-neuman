@@ -47,6 +47,10 @@ class _MANOCustom(smplx.MANO):
     def __init__(self, **kwargs):
         super(_MANOCustom, self).__init__(**kwargs)
 
+        # set all parameters to be untrainable
+        for param in self.parameters():
+            param.requires_grad = False
+
     def verts_transformations_xyz(
             self,
             betas,

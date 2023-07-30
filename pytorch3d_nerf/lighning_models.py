@@ -35,9 +35,8 @@ from losses.opacity_loss import OpacityLoss
 from losses.sil_loss_can import SilhouetteLossCanonical
 from losses.sil_loss_world import SilhouetteLossWorld
 from mano_custom import mano_pytorch3d
-from plot_image_grid import image_grid
 from losses.canonical_utils.cameras_canonical import create_canonical_cameras
-
+from renderers.renderer_warp import RendererWarp
 
 class HandModel(L.LightningModule):
     def __init__(self, nerf_model):
@@ -64,11 +63,11 @@ class HandModel(L.LightningModule):
         self.raysampler_train = NDCMultinomialRaysampler(
             image_height=self.render_size_x,
             image_width=self.render_size_y,
-            n_rays_per_image=8192,
-            n_pts_per_ray=32,
+            n_rays_per_image=4096,
+            n_pts_per_ray=64,
             min_depth=self.min_depth,
             max_depth=self.max_depth,
-            stratified_sampling=True,
+            stratified_sampling=False,
         )
         self.raysampler_val = NDCMultinomialRaysampler(
             image_height=self.render_size_x,
@@ -87,6 +86,7 @@ class HandModel(L.LightningModule):
             stratified_sampling=False,
         )
         self.raymarcher = EmissionAbsorptionRaymarcher()
+        self.renderer_warp = RendererWarp()
 
         # Instantiate the radiance field model.
         self.neural_radiance_field = nerf_model
@@ -113,24 +113,24 @@ class HandModel(L.LightningModule):
             max_epochs=999000,
         )
 
-    def on_fit_start(self):
-
-        self.sil_loss_can = SilhouetteLossCanonical(
-            n_cameras=5,
-            verts_zero_pose=self.hand_model.get_flat_hand_vertices_pytorch3d(self.device),
-            faces=torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :].to(self.device),
-            loss_func=huber.huber,
-            # loss_func=nn.MSELoss(),
-            sil_loss_start_factor=1,
-            sil_loss_epochs=999000,
-            device=self.device,
-        )
-        self.sil_loss_can.to(self.device)
+    # def on_fit_start(self):
+    #
+    #     self.sil_loss_can = SilhouetteLossCanonical(
+    #         n_cameras=5,
+    #         verts_zero_pose=self.hand_model.get_flat_hand_vertices_pytorch3d(self.device),
+    #         faces=torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :].to(self.device),
+    #         loss_func=huber.huber,
+    #         # loss_func=nn.MSELoss(),
+    #         sil_loss_start_factor=1,
+    #         sil_loss_epochs=999000,
+    #         device=self.device,
+    #     )
+    #     self.sil_loss_can.to(self.device)
 
 
     def configure_optimizers(self):
-        # lr = 5e-4
-        lr = 5e-3
+        lr = 5e-4
+        # lr = 5e-3
         optimizer = torch.optim.Adam(self.neural_radiance_field.parameters(), lr=lr)
 
         # Following the original code, we use exponential decay of the
@@ -149,72 +149,64 @@ class HandModel(L.LightningModule):
 
     def training_step(self, batch, batch_idx):
 
-        camera_params, images, silhouettes, manos = batch
+        camera_params, images, silhouettes, silhouettes_can, manos = batch
 
-        batch_cameras = PerspectiveCameras(
-            R=camera_params['R_pytorch3d'],
-            T=camera_params['t_pytorch3d'],
-            focal_length=camera_params['focal'],
-            principal_point=camera_params['princpt'],
-            in_ndc=False,
-            image_size=camera_params['image_size'],
-            device=self.device
-        )
+        # print('silhouettes_can.shape', silhouettes_can.shape)
+        # print('silhouettes.shape', silhouettes.shape)
+        # exit()
 
-        depths = batch_cameras.get_world_to_view_transform().transform_points(
-            manos['verts']
-        )[:, :, 2:]
-
-        min_depth = depths.min() * 0.95
-        max_depth = depths.max() * 1.05
-
-        masks_sampling = sampling_utils.make_sampling_mask(
-            silhouettes
-        )
-
-        ###############################################################
-        # Ray sampling + warping
-        ###############################################################
-
-        ray_bundle = self.raysampler_train(
-            cameras=batch_cameras,
-            mask=masks_sampling,
-            min_depth=min_depth,
-            max_depth=max_depth,
-        )
-
-        rays_points_world = ray_bundle_to_ray_points(ray_bundle)
-
-        # Warp the rays to the canonical view.
-        ray_points_can, ray_directions_can = warp_points.warp_points(
-            rays_points_world,
-            manos['verts'],
-            manos['Ts'],
-        )
-        assert ray_points_can.isnan().any() == False
-        assert ray_directions_can.isnan().any() == False
-
-        ###########################################################################
-        # Rendering
-        ###########################################################################
-
-        # get output of nerf model
-        rays_densities, rays_features = self.neural_radiance_field(
-            ray_points=ray_points_can, ray_directions=ray_directions_can
-        )
-        assert rays_densities.isnan().any() == False
-        assert rays_features.isnan().any() == False
-
-        # render the images and silhouettes
-        rendered_images_silhouettes = self.raymarcher(
-            rays_densities=rays_densities,
-            rays_features=rays_features,
-        )
-        assert rendered_images_silhouettes.isnan().any() == False
-        rendered_images, rendered_silhouettes = (
-            rendered_images_silhouettes.split([3, 1], dim=-1)
-        )
+        # batch_cameras = PerspectiveCameras(
+        #     R=camera_params['R_pytorch3d'],
+        #     T=camera_params['t_pytorch3d'],
+        #     focal_length=camera_params['focal'],
+        #     principal_point=camera_params['princpt'],
+        #     in_ndc=False,
+        #     image_size=camera_params['image_size'],
+        #     device=self.device
+        # )
+        # rendered_images, rendered_silhouettes, ray_bundle = self.renderer_warp.forward(
+        #     raysampler=self.raysampler_train,
+        #     batch_cameras=batch_cameras,
+        #     verts=manos['verts'],
+        #     Ts=manos['Ts'],
+        #     silhouettes=silhouettes,
+        #     neural_radiance_field=self.neural_radiance_field,
+        #     warp=True,
+        # )
         # rendered_images_silhouettes.shape torch.Size([1, 8192, 1, 4])
+
+        ###########################################################################
+        # Raysampling in canonical space
+        ###########################################################################
+
+        # batch_cameras_can = PerspectiveCameras(
+        #     R=camera_params['R_can'],
+        #     T=camera_params['t_can'],
+        #     focal_length=camera_params['focal'],
+        #     principal_point=camera_params['princpt'],
+        #     in_ndc=False,
+        #     image_size=camera_params['image_size'],
+        #     device=self.device
+        # )
+
+        batch_cameras_can = FoVPerspectiveCameras(
+            R=camera_params['R_can'],
+            T=camera_params['t_can'],
+            znear=0.01,
+            zfar=10,
+            device=self.device,
+        )
+
+        rendered_images_can, rendered_silhouettes_can, ray_bundle_can = self.renderer_warp.forward(
+            raysampler=self.raysampler_train,
+            batch_cameras=batch_cameras_can,
+            verts=manos['verts_zero'],
+            Ts=None,
+            silhouettes=silhouettes_can,
+            neural_radiance_field=self.neural_radiance_field,
+            warp=False,
+        )
+
 
         ###########################################################################
         # Silhouette loss, canonical space
@@ -227,14 +219,15 @@ class HandModel(L.LightningModule):
         # add saving of images randomly
         # change batched forward
         # test batched warp
+        # TODO work with notebook: change raysampler params/encoding/mip-nerf to render good shape without empty spaces
         # TODO change validation step
         # TODO add offset network
         # TODO check neuman for other details to implement
 
-        sil_err_can, sil_err_unconstrained_can, sil_loss_factor_can = self.sil_loss_can.forward(
-            ray_points_can,
-            rays_densities,
-            rays_features,
+        sil_err_can, sil_err_unconstrained_can, sil_loss_factor_can = self.sil_loss_world.forward(
+            rendered_silhouettes_can,
+            silhouettes_can,
+            ray_bundle_can,
             self.current_epoch,
         )
 
@@ -242,49 +235,42 @@ class HandModel(L.LightningModule):
         # Silhouette loss, world space
         ###########################################################################
 
-        sil_err_world, sil_err_world_unconstrained, sil_loss_factor_world = self.sil_loss_world.forward(
-            rendered_silhouettes,
-            silhouettes,
-            ray_bundle,
-            self.current_epoch,
-        )
-
-        # print('sil_err_world', sil_err_world)
-        # print('sil_err_world_unconstrained', sil_err_world_unconstrained)
-        #
-        # print('sil_err_can', sil_err_can)
-        # print('sil_err_unconstrained_can', sil_err_unconstrained_can)
-        # exit()
+        # sil_err_world, sil_err_world_unconstrained, sil_loss_factor_world = self.sil_loss_world.forward(
+        #     rendered_silhouettes,
+        #     silhouettes,
+        #     ray_bundle,
+        #     self.current_epoch,
+        # )
 
         ###########################################################################
         # Opacity loss (either 0 or 1) - needs to be delayed
         ###########################################################################
 
-        opacity_err, opacity_err_unconstrained, opacity_loss_factor = self.opacity_loss.forward(
-            rendered_silhouettes,
-            self.current_epoch,
-        )
+        # opacity_err, opacity_err_unconstrained, opacity_loss_factor = self.opacity_loss.forward(
+        #     rendered_silhouettes,
+        #     self.current_epoch,
+        # )
 
         ###########################################################################
         # Color loss
         ###########################################################################
 
-        colors_at_rays = sample_images_at_mc_locs(
-            images,
-            ray_bundle.xys
-        )
-        color_err = self.loss_func(
-            rendered_images,
-            colors_at_rays,
-        )
+        # colors_at_rays = sample_images_at_mc_locs(
+        #     images,
+        #     ray_bundle.xys
+        # )
+        # color_err = self.loss_func(
+        #     rendered_images,
+        #     colors_at_rays,
+        # )
 
         ###########################################################################
 
         # Log the errors.
-        self.log('color_loss', color_err, prog_bar=True, logger=True)
-        self.log('sil_loss_world', sil_err_world, prog_bar=True, logger=True)
+        # self.log('color_loss', color_err, prog_bar=True, logger=True)
+        # self.log('sil_loss_world', sil_err_world, prog_bar=True, logger=True)
         self.log('sil_loss_can', sil_err_can, prog_bar=True, logger=True)
-        self.log('opacity_loss', opacity_err, prog_bar=True, logger=True)
+        # self.log('opacity_loss', opacity_err, prog_bar=True, logger=True)
 
         # The optimization loss is a simple
         # sum of the color and silhouette errors.
@@ -297,7 +283,7 @@ class HandModel(L.LightningModule):
     def validation_step(self, batch, batch_idx):
         # result = self.visualize_batch(batch, warp_rays=True, cameras_canonical=False, canonical_renderer=False)
 
-        camera_params, images, silhouettes, manos = batch
+        camera_params, images, silhouettes, silhouettes_zero, manos = batch
 
         batch_cameras = PerspectiveCameras(
             R=camera_params['R_pytorch3d'],
