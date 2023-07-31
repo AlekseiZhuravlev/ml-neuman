@@ -64,10 +64,10 @@ class HandModel(L.LightningModule):
             image_height=self.render_size_x,
             image_width=self.render_size_y,
             n_rays_per_image=4096,
-            n_pts_per_ray=64,
+            n_pts_per_ray=128,
             min_depth=self.min_depth,
             max_depth=self.max_depth,
-            stratified_sampling=False,
+            stratified_sampling=True,
         )
         self.raysampler_val = NDCMultinomialRaysampler(
             image_height=self.render_size_x,

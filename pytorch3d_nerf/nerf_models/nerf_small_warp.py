@@ -29,7 +29,7 @@ from tqdm.notebook import tqdm
 
 
 class HarmonicEmbedding(torch.nn.Module):
-    def __init__(self, n_harmonic_functions=60, omega0=0.1):
+    def __init__(self, n_harmonic_functions=60, omega0=0.01):
         """
         Given an input tensor `x` of shape [minibatch, ... , dim],
         the harmonic embedding layer converts each feature
