@@ -123,7 +123,8 @@ def generate_cow_renders(
     # rasterization method is used.  Refer to docs/notes/renderer.md for an
     # explanation of the difference between naive and coarse-to-fine rasterization.
     raster_settings = RasterizationSettings(
-        image_size=128, blur_radius=0.0, faces_per_pixel=1
+        image_size=(400, 128),
+        blur_radius=0.0, faces_per_pixel=1
     )
 
     # Create a Phong renderer by composing a rasterizer and a shader. The textured
@@ -148,7 +149,7 @@ def generate_cow_renders(
     # Rasterization settings for silhouette rendering
     sigma = 1e-4
     raster_settings_silhouette = RasterizationSettings(
-        image_size=128, blur_radius=np.log(1.0 / 1e-4 - 1.0) * sigma, faces_per_pixel=50
+        image_size=(400, 128), blur_radius=np.log(1.0 / 1e-4 - 1.0) * sigma, faces_per_pixel=50
     )
 
     # Silhouette renderer

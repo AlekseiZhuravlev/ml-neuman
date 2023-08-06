@@ -98,15 +98,17 @@ def render_zero_pose(cameras):
     verts_py3d =  torch.stack((-verts_xyz[:, :, 0], -verts_xyz[:, :, 1], verts_xyz[:, :, 2]),
                             2)
 
+    verts_py3d_mm = verts_py3d
+
 
     faces = torch.from_numpy(hand_model.faces.astype(np.int32))[None, :, :].to(device)
 
     # copy verts_py3d into 1st dimension of batch, number = 10
-    verts_py3d_repeated = verts_py3d.repeat(n_cameras, 1, 1)
+    verts_py3d_repeated = verts_py3d_mm.repeat(n_cameras, 1, 1)
     faces = faces.repeat(n_cameras, 1, 1)
 
     img, depth = render_mesh(verts_py3d_repeated, faces, cameras, no_grad=False)
-    return img, depth, verts_py3d
+    return img, depth, verts_py3d_mm
 
     # switch n of channels in img
     # img = img.permute(0, 3, 1, 2)
