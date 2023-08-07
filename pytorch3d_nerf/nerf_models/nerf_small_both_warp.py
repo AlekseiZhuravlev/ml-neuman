@@ -179,7 +179,6 @@ class NeuralRadianceField(torch.nn.Module):
             rays_embedding_expand = rays_embedding[..., None, :].expand(
                 *spatial_size, rays_embedding.shape[-1]
             )
-        # TODO changed
 
         # Concatenate ray direction embeddings with
         # features and evaluate the color model.

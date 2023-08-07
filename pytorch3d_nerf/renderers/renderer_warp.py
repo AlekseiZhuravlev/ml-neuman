@@ -70,11 +70,9 @@ class RendererWarp:
 
             # expand ray directions, from one direction per ray to one direction per each point
             spatial_size = ray_points_can.shape[:-1]
-            # ray_directions_can = ray_directions_can_one_dir_per_ray[..., None, :].expand(
-            #     *spatial_size, ray_directions_can_one_dir_per_ray.shape[-1]
-            # )
-            # TODO changed
-            ray_directions_can = torch.zeros_like(ray_points_can)
+            ray_directions_can = ray_directions_can_one_dir_per_ray[..., None, :].expand(
+                *spatial_size, ray_directions_can_one_dir_per_ray.shape[-1]
+            )
 
         assert ray_points_can.isnan().any() == False
         assert ray_directions_can.isnan().any() == False

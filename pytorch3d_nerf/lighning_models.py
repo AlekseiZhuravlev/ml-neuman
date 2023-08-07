@@ -43,16 +43,16 @@ class HandModel(L.LightningModule):
         super().__init__()
 
         self.hand_model = mano_pytorch3d.create_mano_custom(return_right_hand=False)
-        # self.register_buffer(
-        #     'faces',
-        #     torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :]
-        # )
-        #
-        # # TODO this is not 100% accurate, but it's close enough
-        # self.register_buffer(
-        #     'verts_zero_pose',
-        #     self.hand_model.get_flat_hand_vertices_pytorch3d(self.device)
-        # )
+        self.register_buffer(
+            'faces',
+            torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :]
+        )
+
+        # TODO this is not 100% accurate, but it's close enough
+        self.register_buffer(
+            'verts_zero_pose',
+            self.hand_model.get_flat_hand_vertices_pytorch3d(self.device)
+        )
 
         self.min_depth = 0.1
         self.max_depth = 2
@@ -146,6 +146,7 @@ class HandModel(L.LightningModule):
             optimizer, lr_lambda, verbose=False
         )
         return [optimizer], [lr_scheduler]
+
 
     def training_step(self, batch, batch_idx):
 
@@ -278,7 +279,6 @@ class HandModel(L.LightningModule):
         # loss = color_err + sil_err_world + sil_err_can + opacity_err
         loss = sil_err_can
         return loss
-
 
     def validation_step(self, batch, batch_idx):
         # result = self.visualize_batch(batch, warp_rays=True, cameras_canonical=False, canonical_renderer=False)

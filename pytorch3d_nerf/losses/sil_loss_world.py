@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from helpers import sample_images_at_mc_locs
 
 
 class SilhouetteLossWorld(nn.Module):
@@ -22,6 +21,12 @@ class SilhouetteLossWorld(nn.Module):
             silhouettes.unsqueeze(-1),
             ray_bundle.xys
         )
+
+        print('silhouettes.shape', silhouettes.shape)
+        print('silhouettes_at_rays.shape', silhouettes_at_rays.shape)
+        print('rendered_silhouettes.shape', rendered_silhouettes.shape)
+        print('ray_bundle.xys.shape', ray_bundle.xys.shape)
+        exit(0)
 
         sil_err_unconstrained = self.loss_func(
             rendered_silhouettes,

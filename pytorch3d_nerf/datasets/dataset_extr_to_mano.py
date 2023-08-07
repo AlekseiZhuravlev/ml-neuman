@@ -119,10 +119,10 @@ class NeumanDataset(torch.utils.data.Dataset):
 
             # TODO added dilation
             # mask_dilated_5 = ndimage.binary_dilation(mask, iterations=5) - mask.numpy()
-            sil_dilated_10 = ndimage.binary_dilation(sil, iterations=10).astype(np.float32).clip(0.0, 1.0)
+            # sil_dilated_10 = ndimage.binary_dilation(sil, iterations=10).astype(np.float32).clip(0.0, 1.0)
 
             self.silhouettes.append(
-                sil_dilated_10
+                sil
             )
 
     def load_mano(self):

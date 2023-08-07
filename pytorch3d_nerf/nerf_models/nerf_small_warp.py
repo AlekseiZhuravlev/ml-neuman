@@ -29,7 +29,7 @@ from tqdm.notebook import tqdm
 
 
 class HarmonicEmbedding(torch.nn.Module):
-    def __init__(self, n_harmonic_functions=60, omega0=0.01):
+    def __init__(self, n_harmonic_functions=60, omega0=0.1):
         """
         Given an input tensor `x` of shape [minibatch, ... , dim],
         the harmonic embedding layer converts each feature
@@ -155,7 +155,6 @@ class NeuralRadianceField(torch.nn.Module):
         """
         # Normalize the ray_directions to unit l2 norm.
 
-        # TODO disabled directions
         rays_directions_normed = torch.nn.functional.normalize(
             rays_directions, dim=-1
         )
@@ -164,8 +163,6 @@ class NeuralRadianceField(torch.nn.Module):
         rays_embedding = self.harmonic_embedding.forward(
             rays_directions_normed
         )
-
-        rays_embedding = torch.zeros_like(rays_embedding)
 
         # Concatenate ray direction embeddings with
         # features and evaluate the color model.
