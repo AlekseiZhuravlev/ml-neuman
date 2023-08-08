@@ -35,7 +35,7 @@ import lighning_models
 import lightning as L
 from lightning.pytorch.loggers import TensorBoardLogger
 
-from nerf_models import nerf_small_warp
+from nerf_models import nerf_small_no_warp
 from lightning.pytorch.strategies import DDPStrategy
 
 
@@ -66,7 +66,7 @@ if __name__ == '__main__':
     full_loader = DataLoader(full_dataset, batch_size=batch_size, shuffle=False, num_workers=5)
 
     # initialize nerf model
-    nerf = nerf_small_warp.NeuralRadianceField()
+    nerf = nerf_small_no_warp.NeuralRadianceField()
 
     model = lighning_models.HandModel(nerf_model=nerf)
 
@@ -77,7 +77,9 @@ if __name__ == '__main__':
         output_dir,
         # version='small_warp_clipped_sil_loss_99999_lr_99999_mask_0.3_dilation_10_sampling_8192_32_depth_105_huber'
         # version='testCanLoss_silFactor_1_canFactor_1_canCam_2_canLoss_huber_silLoss_huber_opacity_-1_noDir'
-        version='testCanLoss_canSampling_lossSilCan_noCopyDirs_disabledManoGrad_disabledOtherLosses_FOVcameras_Stratified_harmonic_0.01'
+        # version='testCanLoss_canSampling_lossSilCan_noCopyDirs_disabledManoGrad_disabledOtherLosses_FOVcameras_Stratified_harmonic_0.01'
+        version='testCanLoss_worldLossesOnly'
+        # version='testCanLoss_allLosses'
     )
     # checkpoint_callback = ModelCheckpoint(save_top_k=5, monitor="epoch", mode='max', every_n_epochs=1)
 

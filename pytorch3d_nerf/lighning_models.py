@@ -29,7 +29,6 @@ from tqdm import tqdm
 
 import sampling_utils
 import warp_points
-from helpers import sample_images_at_mc_locs
 from losses import huber
 from losses.opacity_loss import OpacityLoss
 from losses.sil_loss_can import SilhouetteLossCanonical
@@ -37,6 +36,8 @@ from losses.sil_loss_world import SilhouetteLossWorld
 from mano_custom import mano_pytorch3d
 from losses.canonical_utils.cameras_canonical import create_canonical_cameras
 from renderers.renderer_warp import RendererWarp
+import sampling_utils
+from helpers import sample_images_at_mc_locs
 
 class HandModel(L.LightningModule):
     def __init__(self, nerf_model):
@@ -64,7 +65,7 @@ class HandModel(L.LightningModule):
             image_height=self.render_size_x,
             image_width=self.render_size_y,
             n_rays_per_image=4096,
-            n_pts_per_ray=128,
+            n_pts_per_ray=64,
             min_depth=self.min_depth,
             max_depth=self.max_depth,
             stratified_sampling=True,
@@ -156,24 +157,25 @@ class HandModel(L.LightningModule):
         # print('silhouettes.shape', silhouettes.shape)
         # exit()
 
-        # batch_cameras = PerspectiveCameras(
-        #     R=camera_params['R_pytorch3d'],
-        #     T=camera_params['t_pytorch3d'],
-        #     focal_length=camera_params['focal'],
-        #     principal_point=camera_params['princpt'],
-        #     in_ndc=False,
-        #     image_size=camera_params['image_size'],
-        #     device=self.device
-        # )
-        # rendered_images, rendered_silhouettes, ray_bundle = self.renderer_warp.forward(
-        #     raysampler=self.raysampler_train,
-        #     batch_cameras=batch_cameras,
-        #     verts=manos['verts'],
-        #     Ts=manos['Ts'],
-        #     silhouettes=silhouettes,
-        #     neural_radiance_field=self.neural_radiance_field,
-        #     warp=True,
-        # )
+        batch_cameras = PerspectiveCameras(
+            R=camera_params['R_pytorch3d'],
+            T=camera_params['t_pytorch3d'],
+            focal_length=camera_params['focal'],
+            principal_point=camera_params['princpt'],
+            in_ndc=False,
+            image_size=camera_params['image_size'],
+            device=self.device
+        )
+        rendered_images, rendered_silhouettes, ray_bundle = self.renderer_warp.forward(
+            raysampler=self.raysampler_train,
+            batch_cameras=batch_cameras,
+            verts=manos['verts'],
+            Ts=manos['Ts'],
+            silhouettes=silhouettes,
+            neural_radiance_field=self.neural_radiance_field,
+            warp=True,
+            sampling_func=sampling_utils.sampling_mask_0_25
+        )
         # rendered_images_silhouettes.shape torch.Size([1, 8192, 1, 4])
 
         ###########################################################################
@@ -206,6 +208,7 @@ class HandModel(L.LightningModule):
             silhouettes=silhouettes_can,
             neural_radiance_field=self.neural_radiance_field,
             warp=False,
+            sampling_func=sampling_utils.sampling_mask_25_0_25
         )
 
 
@@ -236,12 +239,12 @@ class HandModel(L.LightningModule):
         # Silhouette loss, world space
         ###########################################################################
 
-        # sil_err_world, sil_err_world_unconstrained, sil_loss_factor_world = self.sil_loss_world.forward(
-        #     rendered_silhouettes,
-        #     silhouettes,
-        #     ray_bundle,
-        #     self.current_epoch,
-        # )
+        sil_err_world, sil_err_world_unconstrained, sil_loss_factor_world = self.sil_loss_world.forward(
+            rendered_silhouettes,
+            silhouettes,
+            ray_bundle,
+            self.current_epoch,
+        )
 
         ###########################################################################
         # Opacity loss (either 0 or 1) - needs to be delayed
@@ -256,28 +259,30 @@ class HandModel(L.LightningModule):
         # Color loss
         ###########################################################################
 
-        # colors_at_rays = sample_images_at_mc_locs(
-        #     images,
-        #     ray_bundle.xys
-        # )
-        # color_err = self.loss_func(
-        #     rendered_images,
-        #     colors_at_rays,
-        # )
+        colors_at_rays = pytorch3d.renderer.utils.ndc_grid_sample(
+            images.permute(0, 3, 1, 2),
+            ray_bundle.xys,
+        ).permute(0, 2, 3, 1)
+
+        color_err = self.loss_func(
+            rendered_images,
+            colors_at_rays,
+        )
 
         ###########################################################################
 
         # Log the errors.
-        # self.log('color_loss', color_err, prog_bar=True, logger=True)
-        # self.log('sil_loss_world', sil_err_world, prog_bar=True, logger=True)
+        self.log('color_loss', color_err, prog_bar=True, logger=True)
+        self.log('sil_loss_world', sil_err_world, prog_bar=True, logger=True)
         self.log('sil_loss_can', sil_err_can, prog_bar=True, logger=True)
         # self.log('opacity_loss', opacity_err, prog_bar=True, logger=True)
 
         # The optimization loss is a simple
         # sum of the color and silhouette errors.
-        # TODO modified
-        # loss = color_err + sil_err_world + sil_err_can + opacity_err
-        loss = sil_err_can
+
+        # loss = color_err + sil_err_world + sil_err_can
+        loss = color_err + sil_err_world
+        # loss = sil_err_can
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -299,8 +304,14 @@ class HandModel(L.LightningModule):
         # Ray sampling + warping
         ###############################################################
 
+        depths = batch_cameras.get_world_to_view_transform().transform_points(
+            manos['verts']
+        )[:, :, 2:]
+
         ray_bundle = self.raysampler_val(
             cameras=batch_cameras,
+            min_depth=depths.min() * 0.95,
+            max_depth=depths.max() * 1.05,
         )
         rays_points_world = ray_bundle_to_ray_points(ray_bundle)
 
@@ -345,8 +356,14 @@ class HandModel(L.LightningModule):
         # Ray sampling
         ###############################################################
 
+        depths = batch_cameras.get_world_to_view_transform().transform_points(
+            self.verts_zero_pose
+        )[:, :, 2:]
+
         ray_bundle = self.raysampler_canonical(
             cameras=batch_cameras,
+            min_depth=depths.min() * 0.95,
+            max_depth=depths.max() * 1.05,
         )
         ray_points_can = ray_bundle_to_ray_points(ray_bundle)
         ray_directions_can_one_dir_per_ray = ray_bundle.directions

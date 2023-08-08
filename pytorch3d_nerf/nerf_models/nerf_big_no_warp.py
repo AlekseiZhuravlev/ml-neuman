@@ -82,13 +82,13 @@ class NeuralRadianceField(torch.nn.Module):
 
         # Zero the bias of the density layer to avoid
         # a completely transparent initialization.
-        #self.density_layer.bias.data[:] = -1.0  # fixme: Sometimes this is not enough
-        self.density_layer[0].bias.data[:] = -1.0  # fixme: Sometimes this is not enough
+        self.density_layer[0].bias.data[:] = -1.0
 
         self.color_layer = torch.nn.Sequential(
-            LinearWithRepeat(
-                n_hidden_neurons_xyz + embedding_dim_dir, n_hidden_neurons_dir
-            ),
+            # LinearWithRepeat(
+            #     n_hidden_neurons_xyz + embedding_dim_dir, n_hidden_neurons_dir
+            # ),
+            torch.nn.Linear(n_hidden_neurons_xyz + embedding_dim_dir, n_hidden_neurons_dir),
             torch.nn.ReLU(True),
             torch.nn.Linear(n_hidden_neurons_dir, 3),
             torch.nn.Sigmoid(),
@@ -98,8 +98,8 @@ class NeuralRadianceField(torch.nn.Module):
     def _get_densities(
         self,
         features: torch.Tensor,
-        depth_values: torch.Tensor,
-        density_noise_std: float,
+        depth_values: torch.Tensor=None,
+        density_noise_std: float=0.0,
     ) -> torch.Tensor:
         """
         This function takes `features` predicted by `self.mlp_xyz`
@@ -138,53 +138,19 @@ class NeuralRadianceField(torch.nn.Module):
         # Obtain the harmonic embedding of the normalized ray directions.
         rays_embedding = self.harmonic_embedding_dir(rays_directions_normed)
 
-        return self.color_layer((self.intermediate_linear(features), rays_embedding))
+        color_layer_input = torch.cat(
+            (features, rays_embedding),
+            dim=-1
+        )
+        return self.color_layer(color_layer_input)
 
-    def _get_densities_and_colors(
-        self, features: torch.Tensor, ray_bundle: RayBundle, density_noise_std: float
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        The second part of the forward calculation.
+        # return self.color_layer((self.intermediate_linear(features), rays_embedding))
 
-        Args:
-            features: the output of the common mlp (the prior part of the
-                calculation), shape
-                (minibatch x ... x self.n_hidden_neurons_xyz).
-            ray_bundle: As for forward().
-            density_noise_std:  As for forward().
-
-        Returns:
-            rays_densities: A tensor of shape `(minibatch, ..., num_points_per_ray, 1)`
-                denoting the opacity of each ray point.
-            rays_colors: A tensor of shape `(minibatch, ..., num_points_per_ray, 3)`
-                denoting the color of each ray point.
-        """
-        if self.use_multiple_streams and features.is_cuda:
-            current_stream = torch.cuda.current_stream(features.device)
-            other_stream = torch.cuda.Stream(features.device)
-            other_stream.wait_stream(current_stream)
-
-            with torch.cuda.stream(other_stream):
-                rays_densities = self._get_densities(
-                    features, ray_bundle.lengths, density_noise_std
-                )
-                # rays_densities.shape = [minibatch x ... x 1] in [0-1]
-
-            rays_colors = self._get_colors(features, ray_bundle.directions)
-            # rays_colors.shape = [minibatch x ... x 3] in [0-1]
-
-            current_stream.wait_stream(other_stream)
-        else:
-            # Same calculation as above, just serial.
-            rays_densities = self._get_densities(
-                features, ray_bundle.lengths, density_noise_std
-            )
-            rays_colors = self._get_colors(features, ray_bundle.directions)
-        return rays_densities, rays_colors
 
     def forward(
         self,
-        ray_bundle: RayBundle,
+        ray_points,
+        ray_directions,
         density_noise_std: float = 0.0,
         **kwargs,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -213,69 +179,80 @@ class NeuralRadianceField(torch.nn.Module):
             rays_colors: A tensor of shape `(minibatch, ..., num_points_per_ray, 3)`
                 denoting the color of each ray point.
         """
-        # We first convert the ray parametrizations to world
-        # coordinates with `ray_bundle_to_ray_points`.
-        rays_points_world = ray_bundle_to_ray_points(ray_bundle)
-        # rays_points_world.shape = [minibatch x ... x 3]
-
         # For each 3D world coordinate, we obtain its harmonic embedding.
-        embeds_xyz = self.harmonic_embedding_xyz(rays_points_world)
+        embeds_xyz = self.harmonic_embedding_xyz(ray_points)
         # embeds_xyz.shape = [minibatch x ... x self.n_harmonic_functions*6 + 3]
 
         # self.mlp maps each harmonic embedding to a latent feature space.
         features = self.mlp_xyz(embeds_xyz, embeds_xyz)
         # features.shape = [minibatch x ... x self.n_hidden_neurons_xyz]
 
-        rays_densities, rays_colors = self._get_densities_and_colors(
-            features, ray_bundle, density_noise_std
+        ray_densities = self._get_densities(features)
+        ray_colors = self._get_colors(
+            features,
+            ray_directions,
         )
-        return rays_densities, rays_colors
+        return ray_densities, ray_colors
 
     def batched_forward(self,
-                        ray_bundle,
+                        ray_points,
+                        ray_directions,
                         n_batches: int = 16,
                         **kwargs,
                         ):
-        # Parse out shapes needed for tensor reshaping in this function.
-        # ray_bundle = ray_bundle.to(torch.device('cpu'))
+        batches_ray_points = torch.chunk(ray_points, chunks=n_batches, dim=1)
+        batches_ray_directions = torch.chunk(ray_directions, chunks=n_batches, dim=1)
 
-        n_pts_per_ray = ray_bundle.lengths.shape[-1]
-        spatial_size = [*ray_bundle.origins.shape[:-1], n_pts_per_ray]
-        # print('ray_bundle', ray_bundle)
-        # print('spatial_size', spatial_size)
-        total_n_rays = ray_bundle.origins.numel() * n_pts_per_ray
-        # max_batch_size = 1
-        # print('ray_bundle.origins.shape', ray_bundle.origins.shape)
-        # print('total_n_rays', total_n_rays)
-        # n_batches = total_n_rays // (2048 * 128)
-        # print('n_batches', n_batches)
+        # For each batch, execute the standard forward pass and concatenate
+        rays_densities = torch.tensor([], device=ray_points.device)
+        rays_colors = torch.tensor([], device=ray_points.device)
 
-        # exit()
+        for batch_idx in range(len(batches_ray_points)):
+            rays_densities_batch, rays_colors_batch = self.forward(
+                ray_points=batches_ray_points[batch_idx],
+                ray_directions=batches_ray_directions[batch_idx],
+            )
+            rays_densities = torch.cat([rays_densities, rays_densities_batch], dim=1)
+            rays_colors = torch.cat([rays_colors, rays_colors_batch], dim=1)
 
-        # Split the rays to `n_batches` batches.
-        tot_samples = ray_bundle.origins.shape[:-1].numel()
-        batches = torch.chunk(torch.arange(tot_samples), n_batches)
-
-        # For each batch, execute the standard forward pass.
-        batch_outputs = [
-            self.forward(
-                RayBundle(
-                    origins=ray_bundle.origins.view(-1, 3)[batch_idx],
-                    directions=ray_bundle.directions.view(-1, 3)[batch_idx],
-                    lengths=ray_bundle.lengths.view(-1, n_pts_per_ray)[batch_idx],
-                    xys=None,
-                )
-            ) for batch_idx in batches
-        ]
-
-        # Concatenate the per-batch rays_densities and rays_colors
-        # and reshape according to the sizes of the inputs.
-        rays_densities, rays_colors = [
-            torch.cat(
-                [batch_output[output_i] for batch_output in batch_outputs], dim=0
-            ).view(*spatial_size, -1) for output_i in (0, 1)
-        ]
         return rays_densities, rays_colors
+
+
+    def batched_forward_with_cpu(self,
+                        ray_points,
+                        ray_directions,
+                        n_batches: int = 16,
+                        **kwargs,
+                        ):
+
+        assert ray_points.device == ray_directions.device == torch.device('cpu')
+
+        batches_ray_points = torch.chunk(ray_points, chunks=n_batches, dim=1)
+        batches_ray_directions = torch.chunk(ray_directions, chunks=n_batches, dim=1)
+
+        # For each batch, execute the standard forward pass and concatenate
+        rays_densities = torch.tensor([], device='cpu')
+        rays_colors = torch.tensor([], device='cpu')
+
+        for batch_idx in range(len(batches_ray_points)):
+            rays_pts_batch = batches_ray_points[batch_idx].to('cuda')
+            rays_dirs_batch = batches_ray_directions[batch_idx].to('cuda')
+
+            rays_densities_batch, rays_colors_batch = self.forward(
+                ray_points=rays_pts_batch,
+                ray_directions=rays_dirs_batch,
+            )
+            rays_densities = torch.cat([
+                rays_densities,
+                rays_densities_batch.to('cpu')
+            ], dim=1)
+            rays_colors = torch.cat([
+                rays_colors,
+                rays_colors_batch.to('cpu')
+            ], dim=1)
+
+        return rays_densities, rays_colors
+
 
     def forward_points(
             self,

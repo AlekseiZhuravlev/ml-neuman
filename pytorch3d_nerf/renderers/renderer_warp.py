@@ -28,7 +28,8 @@ class RendererWarp:
             Ts,
             silhouettes,
             neural_radiance_field,
-            warp
+            warp,
+            sampling_func
             ):
 
         ###############################################################
@@ -38,7 +39,9 @@ class RendererWarp:
         depths = batch_cameras.get_world_to_view_transform().transform_points(
             verts
         )[:, :, 2:]
-        masks_sampling = sampling_utils.make_sampling_mask(
+
+        # checked, works fine
+        masks_sampling = sampling_func(
             silhouettes
         )
 

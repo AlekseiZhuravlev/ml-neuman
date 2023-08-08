@@ -39,7 +39,6 @@ def sample_images_at_mc_locs(target_images, sampled_rays_xy):
     ground truth images that correspond to the colors
     rendered using `MonteCarloRaysampler`.
     """
-
     raise NotImplementedError("Use ndc sample images")
 
     ba = target_images.shape[0]

@@ -109,6 +109,46 @@ def warp_points_batched(
         return can_pts_py3d, can_dirs_py3d
 
 
+def warp_points_batched_with_cpu(
+        rays_points_world,
+        vertices,
+        Ts,
+        n_batches: int = 16,
+):
+    """
+    Args:
+        ray_points: torch.Size([1, 8192, 1, 32, 3])
+        ray_directions: torch.Size([1, 8192, 1, 32, 3])
+        n_batches: int = 16
+    """
+    assert rays_points_world.device.type == "cpu", "warp_points_batched_with_cpu only works with cpu tensors"
+
+
+    batches_ray_points = torch.chunk(rays_points_world, chunks=n_batches, dim=1)
+
+    # For each batch, execute the standard forward pass and concatenate
+    can_pts_py3d = torch.tensor([], device='cpu')
+    can_dirs_py3d = torch.tensor([], device='cpu')
+
+    for batch_idx in range(len(batches_ray_points)):
+        rays_pts_chunk = batches_ray_points[batch_idx]
+        can_pts_py3d_batch, can_dirs_py3d_batch = warp_points(
+            rays_points_world=rays_pts_chunk.to('cuda'),
+            vertices=vertices.to('cuda'),
+            Ts=Ts.to('cuda'),
+        )
+        can_pts_py3d = torch.cat([
+            can_pts_py3d,
+            can_pts_py3d_batch.to('cpu')
+        ], dim=1)
+        can_dirs_py3d = torch.cat([
+            can_dirs_py3d,
+            can_dirs_py3d_batch.to('cpu')
+        ], dim=1)
+
+    return can_pts_py3d, can_dirs_py3d
+
+
 
 def warp_points_debug(
         rays_points_world,
