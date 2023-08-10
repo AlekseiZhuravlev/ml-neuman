@@ -18,22 +18,11 @@ class SilhouetteLossWorld(nn.Module):
                 ):
 
         # silhouettes_at_rays.shape rendered_silhouettes.shape torch.Size([1, 8192, 1, 1])
-        # silhouettes_at_rays = sample_images_at_mc_locs(
-        #     silhouettes.unsqueeze(-1),
-        #     ray_bundle.xys
-        # )
 
         silhouettes_at_rays = pytorch3d.renderer.utils.ndc_grid_sample(
             silhouettes.unsqueeze(-1).permute(0, 3, 1, 2),
             ray_bundle.xys,
         ).permute(0, 2, 3, 1)
-        #
-        # print('silhouettes.shape', silhouettes.shape)
-        # print('silhouettes_at_rays.shape', silhouettes_at_rays.shape)
-        # print('rendered_silhouettes.shape', rendered_silhouettes.shape)
-        # print('ray_bundle.xys.shape', ray_bundle.xys.shape)
-        # print('silhouettes_at_rays_ndc.shape', silhouettes_at_rays_ndc.shape)
-        # exit(0)
 
         sil_err_unconstrained = self.loss_func(
             rendered_silhouettes,
@@ -41,7 +30,7 @@ class SilhouetteLossWorld(nn.Module):
         )
 
         # decrease silhouette loss and update the factor
-        if self.sil_loss_epochs > 0:
+        if self.sil_loss_epochs > 0 and self.sil_loss_start_factor:
             sil_loss_factor = self.sil_loss_start_factor * max(0, 1 - (current_epoch / self.sil_loss_epochs))
         else:
             sil_loss_factor = 0

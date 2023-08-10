@@ -70,7 +70,7 @@ class HarmonicEmbedding(torch.nn.Module):
 
 
 class NeuralRadianceField(torch.nn.Module):
-    def __init__(self, n_harmonic_functions=60, n_hidden_neurons=256):
+    def __init__(self, input_dim, n_harmonic_functions=60, n_hidden_neurons=256):
         super().__init__()
         """
         Args:
@@ -86,7 +86,7 @@ class NeuralRadianceField(torch.nn.Module):
         self.harmonic_embedding = HarmonicEmbedding(n_harmonic_functions)
 
         # The dimension of the harmonic embedding.
-        embedding_dim = n_harmonic_functions * 2 * 3
+        embedding_dim = n_harmonic_functions * 2 * input_dim
 
         # self.mlp is a simple 2-layer multi-layer perceptron
         # which converts the input per-point harmonic embeddings

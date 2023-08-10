@@ -1,0 +1,57 @@
+model:
+  nerf_model:
+    class_path: nerf_models.nerf_small_no_warp.NeuralRadianceField
+    init_args:
+      input_dim: 3
+
+  offset_net:
+    class_path: ${model.nerf_model.class_path}
+    init_args:
+      input_dim: 4
+
+  loss_func_color:
+    class_path: losses.huber.HuberLoss
+
+  sil_loss_world:
+    class_path: losses.sil_loss_world.SilhouetteLossWorld
+    init_args:
+      loss_func:
+        class_path: losses.huber.HuberLoss
+      sil_loss_start_factor: 1
+      sil_loss_epochs: 999000
+
+  sil_loss_can:
+    class_path: losses.sil_loss_world.SilhouetteLossWorld
+    init_args:
+      loss_func:
+        class_path: losses.huber.HuberLoss
+      sil_loss_start_factor: 1
+      sil_loss_epochs: -1
+
+  renderer_warp:
+    class_path: renderers.renderer_warp.RendererWarp
+    init_args:
+      use_offset_net: False
+
+  enable_offset_net: ${model.renderer_warp.init_args.use_offset_net}
+
+
+data:
+  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/03
+  bg_rm_dilation: -1
+
+
+trainer:
+  max_epochs: 5001
+  default_root_dir: /home/azhuavlev/Desktop/Results/neuman_custom/
+  check_val_every_n_epoch: 250
+  log_every_n_steps: 20
+  logger:
+    class_path: lightning.pytorch.loggers.TensorBoardLogger
+    init_args:
+      save_dir: ${trainer.default_root_dir}
+      version: testConfig_small_worldLosses
+  strategy:
+    class_path: lightning.pytorch.strategies.DDPStrategy
+    init_args:
+      find_unused_parameters: True

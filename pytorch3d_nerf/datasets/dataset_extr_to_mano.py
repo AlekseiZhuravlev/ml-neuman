@@ -21,7 +21,7 @@ from pytorch3d.renderer import (
 
 
 class NeumanDataset(torch.utils.data.Dataset):
-    def __init__(self, exp_dir, cap_ids):
+    def __init__(self, exp_dir, cap_ids, bg_rm_dilation):
         self.exp_dir = exp_dir
         self.cap_ids = cap_ids
         self.hand_model = mano_pytorch3d.create_mano_custom(return_right_hand=False)
@@ -31,7 +31,7 @@ class NeumanDataset(torch.utils.data.Dataset):
         self.load_images()
         self.load_mano()
 
-        self.mask_images()
+        self.mask_images(bg_rm_dilation)
         self.create_zero_pose_silhouettes()
 
 
@@ -117,7 +117,6 @@ class NeumanDataset(torch.utils.data.Dataset):
             sil = 1.0 - sil
             sil = sil.clip(0.0, 1.0)
 
-            # TODO added dilation
             # mask_dilated_5 = ndimage.binary_dilation(mask, iterations=5) - mask.numpy()
             # sil_dilated_10 = ndimage.binary_dilation(sil, iterations=10).astype(np.float32).clip(0.0, 1.0)
 
@@ -175,6 +174,10 @@ class NeumanDataset(torch.utils.data.Dataset):
                 'verts': vertices_py3d.squeeze(0),
                 'verts_zero': verts_zero_pose_py3d.squeeze(0),
                 'Ts': Ts_xyz.squeeze(0),
+
+                # fixme: pose_id is a stub, it needs to be different for each pose
+                'pose_id': 0,
+
                 # 'joints': joints,
             }
             self.manos.append(mano_dict)
@@ -214,9 +217,15 @@ class NeumanDataset(torch.utils.data.Dataset):
 
         return root_pose, hand_pose, shape, trans
 
-    def mask_images(self):
+    def mask_images(self, bg_rm_dilation):
         for i in range(len(self.images)):
-            silh_3ch = np.stack([self.silhouettes[i]] * 3, axis=2).astype(np.float32)
+
+            if bg_rm_dilation > 0:
+                sil_dilated = ndimage.binary_dilation(self.silhouettes[i], iterations=bg_rm_dilation).astype(np.float32).clip(0.0, 1.0)
+            else:
+                sil_dilated = self.silhouettes[i]
+
+            silh_3ch = np.stack([sil_dilated] * 3, axis=2).astype(np.float32)
             self.images[i] = self.images[i] * silh_3ch
 
     def create_zero_pose_silhouettes(self):
@@ -239,16 +248,7 @@ class NeumanDataset(torch.utils.data.Dataset):
                 torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :].to(device)
             )
         self.silhouettes_zero_pose = self.silhouettes_zero_pose.cpu().squeeze(-1)
-        print('silhouettes_zero_pose.shape', self.silhouettes_zero_pose.shape)
-        # plot one silhouette
-        # import matplotlib.pyplot as plt
-        #
-        # for i in range(len(self.silhouettes_zero_pose)):
-        #     plt.figure()
-        #     plt.imshow(self.silhouettes_zero_pose[i].squeeze().cpu().numpy(), cmap='gray')
-        #     plt.savefig(f'/home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf/losses/canonical_utils/images/silhouette_zero_pose_{i}.png')
-        #     plt.close()
-        # exit()
+
 
     def __len__(self):
         return len(self.images)

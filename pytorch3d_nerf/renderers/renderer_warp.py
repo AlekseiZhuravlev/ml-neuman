@@ -10,15 +10,15 @@ from pytorch3d.renderer import (
     ray_bundle_to_ray_points,
 )
 import sampling_utils
-import warp_points
-
 
 
 class RendererWarp:
     def __init__(
             self,
+            use_offset_net
     ):
         self.raymarcher = EmissionAbsorptionRaymarcher()
+        self.use_offset_net = use_offset_net
 
     def forward(
             self,
@@ -26,10 +26,12 @@ class RendererWarp:
             batch_cameras,
             verts,
             Ts,
-            silhouettes,
-            neural_radiance_field,
-            warp,
-            sampling_func
+            masks_sampling,
+            nerf_func,
+            warp_func,
+            offset_net_func,
+            curr_pose_id,
+            logger # fixme: debug only
             ):
 
         ###############################################################
@@ -40,11 +42,6 @@ class RendererWarp:
             verts
         )[:, :, 2:]
 
-        # checked, works fine
-        masks_sampling = sampling_func(
-            silhouettes
-        )
-
         ###############################################################
         # Ray sampling in world space + warping
         ###############################################################
@@ -54,20 +51,25 @@ class RendererWarp:
             mask=masks_sampling,
             min_depth=depths.min() * 0.95,
             max_depth=depths.max() * 1.05,
-            # min_depth=0.01,
-            # max_depth=1.0,
         )
-
         rays_points_world = ray_bundle_to_ray_points(ray_bundle)
 
-        if warp:
+        if warp_func:
             # Warp the rays to the canonical view.
-            ray_points_can, ray_directions_can = warp_points.warp_points(
+            ray_points_can, ray_directions_can = warp_func(
                 rays_points_world,
                 verts,
                 Ts,
             )
+            if self.use_offset_net:
+                # predict offset
+                curr_pose_id_vec = torch.ones_like(ray_points_can[..., 0:1]) * curr_pose_id
+                offset = offset_net_func(torch.cat([ray_points_can, curr_pose_id_vec], dim=-1))
+                logger.log('offset_mean', offset.mean())
+
+                ray_points_can += offset
         else:
+            # no warping
             ray_points_can = rays_points_world
             ray_directions_can_one_dir_per_ray = ray_bundle.directions
 
@@ -85,7 +87,7 @@ class RendererWarp:
         ###########################################################################
 
         # get output of nerf model
-        rays_densities, rays_features = neural_radiance_field(
+        rays_densities, rays_features = nerf_func(
             ray_points=ray_points_can, ray_directions=ray_directions_can
         )
         assert rays_densities.isnan().any() == False
