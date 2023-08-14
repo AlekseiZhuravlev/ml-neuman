@@ -19,7 +19,7 @@ def clear_folder(folder):
 
 class InterhandToNeumanConverter:
     def __init__(self, basefolder, split, capture_n, pose,
-                 cameras_list, experiment_n, max_images_per_camera, max_cameras):
+                 cameras_list, experiment_n, max_images_per_camera, max_cameras, every_n_frames):
         """
         :param basefolder: path to the InterHand dataset
         :param split: 'train', 'test' or 'val'
@@ -39,6 +39,7 @@ class InterhandToNeumanConverter:
         self.pose_path = self.base_folder + '/' + 'images' + '/' + split + '/' + \
                          f"Capture{capture_n}" + '/' + pose
         self.max_cameras = max_cameras
+        self.every_n_frames = every_n_frames
 
         if cameras_list:
             self.cameras_list = cameras_list
@@ -105,19 +106,24 @@ class InterhandToNeumanConverter:
         n_images_per_camera = self.check_camera_img_count()
         n_images = min(n_images_per_camera, self.max_images_per_camera)
 
-        for j_image in tqdm(range(n_images)):
+        for k_image_local_idx in tqdm(range(n_images)):
+            j_image_in_folder = self.every_n_frames * k_image_local_idx
+
             for i_camera, camera in enumerate(self.cameras_list):
+
+                print('camera', camera, 'k_image_local_idx', k_image_local_idx, 'j_image_in_folder', j_image_in_folder)
+
                 camera_folder = self.base_folder + '/images/' + self.split + '/' + \
                                 f"Capture{self.capture_n}" + '/' + self.pose + '/' + f'cam{camera}'
-                img = sorted(os.listdir(camera_folder))[j_image]
+                img = sorted(os.listdir(camera_folder))[j_image_in_folder]
 
                 self.copy_image(
                     from_path=camera_folder,
                     img_name=img,
                     to_path=self.target_folder + '/images',
-                    grayscale=False)
-
-                self.create_mano(img)
+                    grayscale=False
+                )
+                self.create_mano(img, k_image_local_idx)
 
                 self.create_camera(camera)
                 self.curr_img += 1
@@ -138,9 +144,13 @@ class InterhandToNeumanConverter:
         os.system(f'rm {to_path}/{img_name}')
 
 
-    def create_mano(self, img_name):
+    def create_mano(self, img_name, k_image_local_idx):
         img_id = img_name[5:-4]
         mano_params = self.mano_dict[self.capture_n][img_id]
+
+        # add key 'pose_id' to mano_params
+        mano_params['left']['pose_id'] = k_image_local_idx
+
         with open(f'{self.mano_path}/{self.curr_img:05d}.json', 'w') as f:
             json.dump(mano_params, f)
 
@@ -174,12 +184,11 @@ if __name__ == '__main__':
         split='test',
         capture_n='0',
         pose='ROM04_LT_Occlusion',
-        # frames_list_slice=slice(None, 100, None),
         cameras_list=None,#['400262', '400263', '400264', '400265', '400284'],
-        # val_cameras_frac=0.1,
-        # max_cameras=15,
-        experiment_n='06_clean',
-        max_images_per_camera=1,
-        max_cameras=60
+        experiment_n='07_cam5_im12',
+        max_images_per_camera=12,
+        max_cameras=5,
+        every_n_frames=10,
+
     )
     converter.copy_images()

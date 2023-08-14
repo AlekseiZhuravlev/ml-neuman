@@ -28,7 +28,6 @@ from pytorch3d.renderer import (
 from tqdm import tqdm
 
 import sampling_utils
-import sampling_utils
 import warp_points
 from helpers import sample_images_at_mc_locs
 from losses import huber
@@ -44,7 +43,7 @@ import warp_points
 class HandModel(L.LightningModule):
     def __init__(self,
                  nerf_model,
-                 offset_net,
+                 offset_module,
                  loss_func_color,
                  sil_loss_world,
                  sil_loss_can,
@@ -101,12 +100,18 @@ class HandModel(L.LightningModule):
 
         # Instantiate the radiance field model.
         self.neural_radiance_field = nerf_model
-        self.offset_net = offset_net
+        self.offset_module = offset_module
+
+        print('self.neural_radiance_field', self.neural_radiance_field)
+        print('self.offset_net', self.offset_module.offset_net)
 
         if not enable_offset_net:
             # set offset net parameters as non-trainable
-            for param in self.offset_net.parameters():
+            for param in self.offset_module.offset_net.parameters():
                 param.requires_grad = False
+        else:
+            for param in self.offset_module.offset_net.parameters():
+                param.requires_grad = True
 
         self.validation_images = []
         self.can_validation_images = []
@@ -115,11 +120,26 @@ class HandModel(L.LightningModule):
         self.sil_loss_world = sil_loss_world
         self.sil_loss_can = sil_loss_can
 
+        # fixme: this is a hack to make the offset net work
+        self.automatic_optimization = False
+
+
+
+
+
 
     def configure_optimizers(self):
-        print('self.neural_radiance_field', self.neural_radiance_field)
         lr = 5e-4
-        optimizer = torch.optim.Adam(self.neural_radiance_field.parameters(), lr=lr)
+
+        # params = list(self.neural_radiance_field.parameters()) + list(self.offset_module.offset_net.parameters())
+        params = list(self.neural_radiance_field.parameters())
+        optimizer = torch.optim.Adam(params, lr=lr)
+
+        optimizer_offset = torch.optim.Adam(self.offset_module.offset_net.parameters(), lr=5e-5)
+
+        print('self.neural_radiance_field', self.neural_radiance_field)
+        print('self.offset_net', self.offset_module.offset_net)
+        print('n of optimized params', len(params))
 
         # Following the original code, we use exponential decay of the
         # learning rate: current_lr = base_lr * gamma ** (epoch / step_size)
@@ -134,9 +154,20 @@ class HandModel(L.LightningModule):
         lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
             optimizer, lr_lambda, verbose=False
         )
-        return [optimizer], [lr_scheduler]
+        lr_scheduler_offset = torch.optim.lr_scheduler.LambdaLR(
+            optimizer_offset, lr_lambda, verbose=False
+        )
+
+        return [optimizer, optimizer_offset], [lr_scheduler, lr_scheduler_offset]
 
     def training_step(self, batch, batch_idx):
+
+        # fixme: this is a hack to make the offset net work
+        opt, opt_offset = self.optimizers()
+        opt.zero_grad()
+        opt_offset.zero_grad()
+
+
         camera_params, images, silhouettes, silhouettes_can, manos = batch
 
         ###########################################################################
@@ -162,9 +193,10 @@ class HandModel(L.LightningModule):
             nerf_func=self.neural_radiance_field.forward,
             warp_func=warp_points.warp_points,
 
-            offset_net_func=self.offset_net.forward,
+            offset_net_func=self.offset_module.forward,
             curr_pose_id=manos['pose_id'],
             logger=self.logger.experiment,
+            curr_epoch=self.current_epoch,
         )  # rendered_images_silhouettes.shape torch.Size([1, 8192, 1, 4])
 
         ###########################################################################
@@ -192,6 +224,7 @@ class HandModel(L.LightningModule):
             offset_net_func=None,
             curr_pose_id=None,
             logger=None,
+            curr_epoch=self.current_epoch,
         )
 
         ###########################################################################
@@ -236,8 +269,14 @@ class HandModel(L.LightningModule):
         self.log('color_loss', color_err, prog_bar=True, logger=True)
         self.log('sil_loss_world', sil_err_world, prog_bar=True, logger=True)
         self.log('sil_loss_can', sil_err_can, prog_bar=True, logger=True)
+        self.log('offset_mean', self.offset_module.mean_offset, prog_bar=True, logger=True)
 
-        loss = color_err + sil_err_world + sil_err_can
+        loss = color_err + sil_err_world + sil_err_can + 0.1 * self.offset_module.mean_offset
+
+        loss.backward()
+        opt.step()
+        opt_offset.step()
+
         return loss
 
 
@@ -266,9 +305,10 @@ class HandModel(L.LightningModule):
             nerf_func=self.neural_radiance_field.batched_forward,
             warp_func=warp_points.warp_points_batched,
 
-            offset_net_func=self.offset_net.batched_forward,
+            offset_net_func=self.offset_module.batched_forward,
             curr_pose_id=manos['pose_id'],
             logger=self.logger.experiment,
+            curr_epoch=self.current_epoch,
         )  # rendered_images_silhouettes.shape torch.Size([1, 8192, 1, 4])
 
         # convert rendered silhouette to rgb
@@ -294,6 +334,8 @@ class HandModel(L.LightningModule):
             offset_net_func=None,
             curr_pose_id=None,
             logger=self.logger.experiment,
+            curr_epoch=self.current_epoch,
+
         )  # rendered_images_silhouettes.shape torch.Size([1, 8192, 1, 4])
 
         # convert rendered silhouette to rgb

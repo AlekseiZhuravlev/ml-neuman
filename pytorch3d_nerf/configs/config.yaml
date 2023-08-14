@@ -1,13 +1,14 @@
 model:
   nerf_model:
     class_path: nerf_models.nerf_small_no_warp.NeuralRadianceField
-    init_args:
-      input_dim: 3
 
-  offset_net:
-    class_path: ${model.nerf_model.class_path}
+  offset_module:
+    class_path: offset.offset_module.OffsetModule
     init_args:
-      input_dim: 4
+      offset_net:
+        class_path: nerf_models.nerf_small_no_warp.OffsetNetworkNoDir
+      offset_scale: 0.3
+      offset_delay: 0
 
   loss_func_color:
     class_path: losses.huber.HuberLoss
@@ -18,7 +19,7 @@ model:
       loss_func:
         class_path: losses.huber.HuberLoss
       sil_loss_start_factor: 1
-      sil_loss_epochs: 999000
+      sil_loss_epochs: -1
 
   sil_loss_can:
     class_path: losses.sil_loss_world.SilhouetteLossWorld
@@ -31,13 +32,14 @@ model:
   renderer_warp:
     class_path: renderers.renderer_warp.RendererWarp
     init_args:
-      use_offset_net: False
+      use_offset_net: True
 
   enable_offset_net: ${model.renderer_warp.init_args.use_offset_net}
 
 
 data:
-  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/03
+#  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/03
+  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/07_cam5_im12
   bg_rm_dilation: -1
 
 
@@ -50,8 +52,11 @@ trainer:
     class_path: lightning.pytorch.loggers.TensorBoardLogger
     init_args:
       save_dir: ${trainer.default_root_dir}
-      version: testConfig_small_worldLosses
+      version: testOffsetNet_small_colorLoss_dynamic_delay0_lr5e-5
+
   strategy:
     class_path: lightning.pytorch.strategies.DDPStrategy
     init_args:
       find_unused_parameters: True
+
+# TODO: check how Ts are created in SMPL, can we manually create more?

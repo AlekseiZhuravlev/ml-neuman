@@ -1,6 +1,6 @@
 import sys, os
 import glob
-sys.path.append("/home/azhuavlev/PycharmProjects/ml-neuman_mano")
+sys.path.append("/home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf")
 
 
 import torch
@@ -17,6 +17,7 @@ from losses.canonical_utils.render_canonical import RendererCanonical
 from pytorch3d.renderer import (
     look_at_view_transform,
     FoVPerspectiveCameras,
+    PerspectiveCameras,
 )
 
 
@@ -27,12 +28,13 @@ class NeumanDataset(torch.utils.data.Dataset):
         self.hand_model = mano_pytorch3d.create_mano_custom(return_right_hand=False)
 
         self.load_cameras_interhand()
-        self.load_silhouettes()
+        # self.load_silhouettes()
         self.load_images()
         self.load_mano()
 
-        self.mask_images(bg_rm_dilation)
         self.create_zero_pose_silhouettes()
+        self.create_silhouettes()
+        self.mask_images(bg_rm_dilation)
 
 
 
@@ -84,10 +86,10 @@ class NeumanDataset(torch.utils.data.Dataset):
                     't_pytorch3d': t_train,
                     'R_can': self.Rs_can[j_index],
                     't_can': self.Ts_can[j_index],
-                    'intrinsic_mat': intrinsic_mat,
-                    'image_size': image_size,
-                    'focal': focal,
-                    'princpt': princpt,
+                    'intrinsic_mat': torch.tensor(intrinsic_mat),
+                    'image_size': torch.tensor(image_size),
+                    'focal': torch.tensor(focal),
+                    'princpt': torch.tensor(princpt),
                 })
 #
     def load_images(self):
@@ -104,6 +106,7 @@ class NeumanDataset(torch.utils.data.Dataset):
             self.images.append(img)
 
     def load_silhouettes(self):
+        raise NotImplementedError('create silhouettes instead')
         sil_path = self.exp_dir + '/segmentations'
 
         self.silhouettes = []
@@ -158,13 +161,11 @@ class NeumanDataset(torch.utils.data.Dataset):
                 transl=trans
             )
 
-            # # check if joints_path exists
-            # if os.path.exists(joints_path):
-            #     joints_file = joints_path + f'/{i_cap_id:05d}.json'
-            #     with open(joints_file) as f:
-            #         joints = json.load(f)
-            # else:
-            #     joints = 0
+            if 'pose_id' in mano:
+                pose_id = mano['pose_id']
+            else:
+                print('pose_id not found in mano')
+                pose_id = 1
 
             mano_dict = {
                 'root_pose': root_pose.squeeze(0),
@@ -174,11 +175,7 @@ class NeumanDataset(torch.utils.data.Dataset):
                 'verts': vertices_py3d.squeeze(0),
                 'verts_zero': verts_zero_pose_py3d.squeeze(0),
                 'Ts': Ts_xyz.squeeze(0),
-
-                # fixme: pose_id is a stub, it needs to be different for each pose
-                'pose_id': 0,
-
-                # 'joints': joints,
+                'pose_id': pose_id,
             }
             self.manos.append(mano_dict)
 
@@ -230,24 +227,52 @@ class NeumanDataset(torch.utils.data.Dataset):
 
     def create_zero_pose_silhouettes(self):
 
-        device='cuda:0' if torch.cuda.is_available() else 'cpu'
+        device='cuda' if torch.cuda.is_available() else 'cpu'
         cameras = FoVPerspectiveCameras(
             R=self.Rs_can,
             T=self.Ts_can,
             znear=0.01,
             zfar=10,
             device=device,
-            # image_size=image_sizes
         )
+        #        verts_py3d_repeated = verts_py3d.repeat(self.n_cameras, 1, 1)
+        # faces_repeated = faces.repeat(self.n_cameras, 1, 1)
 
         renderer = RendererCanonical(cameras)
 
+        # print(self.manos[0]['verts_zero'].repeat(len(cameras), 1, 1).shape)
+        # print(torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :].repeat(len(cameras), 1, 1).shape)
+
         with torch.no_grad():
             self.silhouettes_zero_pose = renderer.render_zero_pose_sil(
-                self.manos[0]['verts_zero'].to(device),
-                torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :].to(device)
+                self.manos[0]['verts_zero'].repeat(len(cameras), 1, 1).to(device),
+                torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :].repeat(len(cameras), 1, 1).to(device),
             )
         self.silhouettes_zero_pose = self.silhouettes_zero_pose.cpu().squeeze(-1)
+
+    def create_silhouettes(self):
+        device='cuda' if torch.cuda.is_available() else 'cpu'
+        # device='cpu'
+
+        cameras = PerspectiveCameras(
+            R=torch.stack([camera_params['R_pytorch3d'] for camera_params in self.camera_params_training], dim=0),
+            T=torch.stack([camera_params['t_pytorch3d'] for camera_params in self.camera_params_training], dim=0),
+            focal_length=torch.stack([camera_params['focal'] for camera_params in self.camera_params_training], dim=0),
+            principal_point=torch.stack([camera_params['princpt'] for camera_params in self.camera_params_training], dim=0),
+            in_ndc=False,
+            image_size=torch.stack([camera_params['image_size'] for camera_params in self.camera_params_training], dim=0),
+            device=device
+        )
+        renderer = RendererCanonical(cameras)
+
+        verts_to_render = torch.stack([mano['verts'] for mano in self.manos], dim=0)
+
+        with torch.no_grad():
+            self.silhouettes = renderer.render_zero_pose_sil(
+                verts_to_render.to(device),
+                torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :].to(device).repeat(len(cameras), 1, 1),
+            )
+        self.silhouettes = self.silhouettes.cpu().squeeze(-1)
 
 
     def __len__(self):
@@ -255,3 +280,21 @@ class NeumanDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         return self.camera_params_training[idx], self.images[idx], self.silhouettes[idx], self.silhouettes_zero_pose[idx], self.manos[idx]
+
+
+if __name__ == '__main__':
+
+
+    data_path = '/home/azhuavlev/Desktop/Data/InterHand_Neuman/03'
+
+    all_ids = list(range(len(
+        glob.glob(os.path.join(data_path, 'images', '*.png'))
+    )))
+
+    # use 80% of the data for training, randomize the order
+    np.random.shuffle(all_ids)
+    train_ids = all_ids[int(0.3 * len(all_ids)):]
+    test_ids = all_ids[:int(0.3 * len(all_ids))]
+    print(test_ids)
+
+    train_dataset = NeumanDataset(data_path, train_ids, bg_rm_dilation=0)

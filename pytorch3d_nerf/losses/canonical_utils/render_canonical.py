@@ -8,6 +8,7 @@ from pytorch3d.renderer import (
     RasterizationSettings,
     MeshRenderer,
     MeshRasterizer,
+    MeshRendererWithFragments,
     TexturesVertex,
     SoftSilhouetteShader,
     BlendParams,
@@ -38,6 +39,15 @@ class RendererCanonical(L.LightningModule):
             ),
             shader=SoftSilhouetteShader(blend_params=blend_params)
         )
+
+        self.renderer_mesh_depth = MeshRendererWithFragments(
+            rasterizer=MeshRasterizer(
+                cameras=cameras,
+                raster_settings=raster_settings_mesh
+            ),
+            shader=SoftSilhouetteShader(blend_params=blend_params)
+        )
+
         # point cloud renderer
         raster_settings = PointsRasterizationSettings(
             image_size=(512, 334),
@@ -52,10 +62,8 @@ class RendererCanonical(L.LightningModule):
         )
 
 
-    def render_zero_pose_sil(self, verts_py3d, faces):
+    def render_zero_pose_sil(self, verts_py3d_repeated, faces_repeated):
         # copy verts_py3d into 1st dimension of batch, number = 10
-        verts_py3d_repeated = verts_py3d.repeat(self.n_cameras, 1, 1)
-        faces_repeated = faces.repeat(self.n_cameras, 1, 1)
 
         device = verts_py3d_repeated.device
         batch_size, vertex_num = verts_py3d_repeated.shape[:2]
@@ -66,6 +74,19 @@ class RendererCanonical(L.LightningModule):
         silhouettes_rgba = self.renderer_mesh(meshes)
         silhouettes = (silhouettes_rgba[:, :, :, 3] > 0.1).unsqueeze(-1).float()
         return silhouettes
+
+
+    def render_depth(self, verts_py3d_repeated, faces_repeated):
+        # copy verts_py3d into 1st dimension of batch, number = 10
+
+        device = verts_py3d_repeated.device
+        batch_size, vertex_num = verts_py3d_repeated.shape[:2]
+
+        textures = TexturesVertex(verts_features=torch.ones((batch_size, vertex_num, 3)).float().to(device))
+        meshes = Meshes(verts_py3d_repeated, faces_repeated, textures)
+
+        images, fragments = self.renderer_mesh_depth(meshes)
+        return images, fragments
 
     def render_nerf_point_cloud(self, rays_points_can, rays_densities, rays_features):
 

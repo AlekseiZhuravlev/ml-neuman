@@ -10,13 +10,14 @@ from pytorch3d.renderer import (
     ray_bundle_to_ray_points,
 )
 import sampling_utils
+import lightning as L
 
-
-class RendererWarp:
+class RendererWarp(L.LightningModule):
     def __init__(
             self,
             use_offset_net
     ):
+        super().__init__()
         self.raymarcher = EmissionAbsorptionRaymarcher()
         self.use_offset_net = use_offset_net
 
@@ -31,7 +32,8 @@ class RendererWarp:
             warp_func,
             offset_net_func,
             curr_pose_id,
-            logger # fixme: debug only
+            logger, # fixme: debug only,
+            curr_epoch
             ):
 
         ###############################################################
@@ -56,18 +58,22 @@ class RendererWarp:
 
         if warp_func:
             # Warp the rays to the canonical view.
-            ray_points_can, ray_directions_can = warp_func(
+            ray_points_can_raw, ray_directions_can = warp_func(
                 rays_points_world,
                 verts,
                 Ts,
             )
             if self.use_offset_net:
                 # predict offset
-                curr_pose_id_vec = torch.ones_like(ray_points_can[..., 0:1]) * curr_pose_id
-                offset = offset_net_func(torch.cat([ray_points_can, curr_pose_id_vec], dim=-1))
-                logger.log('offset_mean', offset.mean())
-
-                ray_points_can += offset
+                curr_pose_id_vec = torch.ones_like(ray_points_can_raw[..., 0:1]) * curr_pose_id
+                offset_vec = offset_net_func(
+                    torch.cat([ray_points_can_raw, curr_pose_id_vec], dim=-1),
+                    ray_directions_can,
+                    curr_epoch
+                )
+                ray_points_can = offset_vec + ray_points_can_raw
+            else:
+                ray_points_can = ray_points_can_raw
         else:
             # no warping
             ray_points_can = rays_points_world

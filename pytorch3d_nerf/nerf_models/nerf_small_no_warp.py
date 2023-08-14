@@ -70,7 +70,7 @@ class HarmonicEmbedding(torch.nn.Module):
 
 
 class NeuralRadianceField(torch.nn.Module):
-    def __init__(self, input_dim, n_harmonic_functions=60, n_hidden_neurons=256):
+    def __init__(self, n_harmonic_functions=60, n_hidden_neurons=256):
         super().__init__()
         """
         Args:
@@ -86,7 +86,7 @@ class NeuralRadianceField(torch.nn.Module):
         self.harmonic_embedding = HarmonicEmbedding(n_harmonic_functions)
 
         # The dimension of the harmonic embedding.
-        embedding_dim = n_harmonic_functions * 2 * input_dim
+        embedding_dim = n_harmonic_functions * 2 * 3
 
         # self.mlp is a simple 2-layer multi-layer perceptron
         # which converts the input per-point harmonic embeddings
@@ -110,7 +110,6 @@ class NeuralRadianceField(torch.nn.Module):
             # To ensure that the colors correctly range between [0-1],
             # the layer is terminated with a sigmoid layer.
         )
-
         # The density layer converts the features of self.mlp
         # to a 1D density value representing the raw opacity
         # of each point.
@@ -244,3 +243,195 @@ class NeuralRadianceField(torch.nn.Module):
             rays_colors = torch.cat([rays_colors, rays_colors_batch], dim=1)
 
         return rays_densities, rays_colors
+
+
+class OffsetNetwork(torch.nn.Module):
+    def __init__(self, n_harmonic_functions=60, n_hidden_neurons=256):
+        super().__init__()
+        """
+        Args:
+            n_harmonic_functions: The number of harmonic functions
+                used to form the harmonic embedding of each point.
+            n_hidden_neurons: The number of hidden units in the
+                fully connected layers of the MLPs of the model.
+        """
+
+        # The harmonic embedding layer converts input 3D coordinates
+        # to a representation that is more suitable for
+        # processing with a deep neural network.
+        self.harmonic_embedding = HarmonicEmbedding(n_harmonic_functions)
+
+        # The dimension of the harmonic embedding.
+        embedding_dim_pts = n_harmonic_functions * 2 * 4
+        embedding_dim_dirs = n_harmonic_functions * 2 * 3
+
+        # self.mlp is a simple 2-layer multi-layer perceptron
+        # which converts the input per-point harmonic embeddings
+        # to a latent representation.
+        # Not that we use Softplus activations instead of ReLU.
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(embedding_dim_pts, n_hidden_neurons),
+            torch.nn.Softplus(beta=10.0),
+            torch.nn.Linear(n_hidden_neurons, n_hidden_neurons),
+            torch.nn.Softplus(beta=10.0),
+        )
+
+        # Given features predicted by self.mlp, self.color_layer
+        # is responsible for predicting a 3-D per-point vector
+        # that represents the RGB color of the point.
+        self.points_layer = torch.nn.Sequential(
+            torch.nn.Linear(n_hidden_neurons + embedding_dim_dirs, n_hidden_neurons),
+            torch.nn.Softplus(beta=10.0),
+            torch.nn.Linear(n_hidden_neurons, 3),
+        )
+
+    def _get_offset(self, features, rays_directions):
+        rays_directions_normed = torch.nn.functional.normalize(
+            rays_directions, dim=-1
+        )
+
+        # Obtain the harmonic embedding of the normalized ray directions.
+        rays_embedding = self.harmonic_embedding.forward(
+            rays_directions_normed
+        )
+
+        # Concatenate ray direction embeddings with
+        # features and evaluate the color model.
+        points_layer_input = torch.cat(
+            (features, rays_embedding),
+            dim=-1
+        )
+        return self.points_layer(points_layer_input)
+
+    def forward(
+            self,
+            ray_points,
+            ray_directions,
+    ):
+        # For each 3D world coordinate, we obtain its harmonic embedding.
+        embeds = self.harmonic_embedding.forward(
+            ray_points
+        )
+        # embeds.shape = [minibatch x ... x self.n_harmonic_functions*6]
+
+        # self.mlp maps each harmonic embedding to a latent feature space.
+        features = self.mlp(embeds)
+        # features.shape = [minibatch x ... x n_hidden_neurons]
+
+        # Finally, given the per-point features,
+        # execute the density and color branches.
+        ray_offset = self._get_offset(
+            features,
+            ray_directions,
+        )
+        return ray_offset
+
+
+    def batched_forward(
+            self,
+            ray_points,
+            ray_directions,
+            n_batches: int = 16,
+    ):
+        batches_ray_points = torch.chunk(ray_points, chunks=n_batches, dim=1)
+        batches_ray_directions = torch.chunk(ray_directions, chunks=n_batches, dim=1)
+
+        # For each batch, execute the standard forward pass and concatenate
+        rays_offsets = torch.tensor([], device=ray_points.device)
+
+        for batch_idx in range(len(batches_ray_points)):
+            rays_offsets_batch = self.forward(
+                ray_points=batches_ray_points[batch_idx],
+                ray_directions=batches_ray_directions[batch_idx],
+            )
+            rays_offsets = torch.cat([rays_offsets, rays_offsets_batch], dim=1)
+
+        return rays_offsets
+
+
+
+class OffsetNetworkNoDir(torch.nn.Module):
+    def __init__(self, n_harmonic_functions=60, n_hidden_neurons=256):
+        super().__init__()
+        """
+        Args:
+            n_harmonic_functions: The number of harmonic functions
+                used to form the harmonic embedding of each point.
+            n_hidden_neurons: The number of hidden units in the
+                fully connected layers of the MLPs of the model.
+        """
+
+        # The harmonic embedding layer converts input 3D coordinates
+        # to a representation that is more suitable for
+        # processing with a deep neural network.
+        self.harmonic_embedding = HarmonicEmbedding(n_harmonic_functions)
+
+        # The dimension of the harmonic embedding.
+        embedding_dim_pts = n_harmonic_functions * 2 * 4
+
+        # self.mlp is a simple 2-layer multi-layer perceptron
+        # which converts the input per-point harmonic embeddings
+        # to a latent representation.
+        # Not that we use Softplus activations instead of ReLU.
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(embedding_dim_pts, n_hidden_neurons),
+            torch.nn.Softplus(beta=10.0),
+            torch.nn.Linear(n_hidden_neurons, n_hidden_neurons),
+            torch.nn.Softplus(beta=10.0),
+        )
+
+        # Given features predicted by self.mlp, self.color_layer
+        # is responsible for predicting a 3-D per-point vector
+        # that represents the RGB color of the point.
+        self.points_layer = torch.nn.Sequential(
+            torch.nn.Linear(n_hidden_neurons, n_hidden_neurons),
+            torch.nn.Softplus(beta=10.0),
+            torch.nn.Linear(n_hidden_neurons, 3),
+        )
+
+    def _get_offset(self, features):
+        return self.points_layer(features)
+
+    def forward(
+            self,
+            ray_points,
+            ray_directions,
+    ):
+        # For each 3D world coordinate, we obtain its harmonic embedding.
+        embeds = self.harmonic_embedding.forward(
+            ray_points
+        )
+        # embeds.shape = [minibatch x ... x self.n_harmonic_functions*6]
+
+        # self.mlp maps each harmonic embedding to a latent feature space.
+        features = self.mlp(embeds)
+        # features.shape = [minibatch x ... x n_hidden_neurons]
+
+        # Finally, given the per-point features,
+        # execute the density and color branches.
+        ray_offset = self._get_offset(
+            features,
+        )
+        return ray_offset
+
+
+    def batched_forward(
+            self,
+            ray_points,
+            ray_directions,
+            n_batches: int = 16,
+    ):
+        batches_ray_points = torch.chunk(ray_points, chunks=n_batches, dim=1)
+        batches_ray_directions = torch.chunk(ray_directions, chunks=n_batches, dim=1)
+
+        # For each batch, execute the standard forward pass and concatenate
+        rays_offsets = torch.tensor([], device=ray_points.device)
+
+        for batch_idx in range(len(batches_ray_points)):
+            rays_offsets_batch = self.forward(
+                ray_points=batches_ray_points[batch_idx],
+                ray_directions=batches_ray_directions[batch_idx],
+            )
+            rays_offsets = torch.cat([rays_offsets, rays_offsets_batch], dim=1)
+
+        return rays_offsets

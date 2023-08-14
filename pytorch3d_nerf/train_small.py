@@ -76,11 +76,6 @@ if __name__ == '__main__':
     else:
         raise NotImplementedError
 
-    # TODO: add options manager
-    # TODO: change val step to use renderer
-    # TODO: make dataset render mask itself
-
-
     model = lighning_models.HandModel(nerf_model=nerf, offset_net=offset_net)
 
     # print(model.raysampler_mc.min_depth)
