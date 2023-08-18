@@ -32,14 +32,18 @@ model:
   renderer_warp:
     class_path: renderers.renderer_warp.RendererWarp
     init_args:
-      use_offset_net: True
+      use_offset_net: False
 
   enable_offset_net: ${model.renderer_warp.init_args.use_offset_net}
 
+  warp_class:
+    class_path: warping.warp_uv.WarpUV
+#    class_path: warping.warp_points.WarpCanonical
+
 
 data:
-#  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/03
-  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/07_cam5_im12
+  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/03
+#  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/07_cam5_im12
   bg_rm_dilation: -1
 
 
@@ -52,7 +56,8 @@ trainer:
     class_path: lightning.pytorch.loggers.TensorBoardLogger
     init_args:
       save_dir: ${trainer.default_root_dir}
-      version: testOffsetNet_small_colorLoss_dynamic_delay0_lr5e-5
+      version: testUVwarp_static
+#      version: testOffsetNet_small_colorLoss_dynamic_delay0_lr5e-5
 
   strategy:
     class_path: lightning.pytorch.strategies.DDPStrategy

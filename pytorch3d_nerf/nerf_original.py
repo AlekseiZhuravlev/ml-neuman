@@ -4,7 +4,8 @@ import torch
 from pytorch3d.common.linear_with_repeat import LinearWithRepeat
 from pytorch3d.renderer import HarmonicEmbedding, ray_bundle_to_ray_points, RayBundle
 from mlp_with_skips import MLPWithInputSkips
-import warp_points
+from pytorch3d_nerf.warping import warp_points
+
 
 def _xavier_init(linear):
     """

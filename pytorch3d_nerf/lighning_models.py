@@ -28,7 +28,6 @@ from pytorch3d.renderer import (
 from tqdm import tqdm
 
 import sampling_utils
-import warp_points
 from helpers import sample_images_at_mc_locs
 from losses import huber
 from losses.canonical_utils.cameras_canonical import create_canonical_cameras
@@ -37,7 +36,6 @@ from losses.sil_loss_can import SilhouetteLossCanonical
 from losses.sil_loss_world import SilhouetteLossWorld
 from mano_custom import mano_pytorch3d
 from renderers.renderer_warp import RendererWarp
-import warp_points
 
 
 class HandModel(L.LightningModule):
@@ -48,7 +46,8 @@ class HandModel(L.LightningModule):
                  sil_loss_world,
                  sil_loss_can,
                  renderer_warp,
-                 enable_offset_net
+                 enable_offset_net,
+                 warp_class
                  ):
         super().__init__()
 
@@ -97,6 +96,8 @@ class HandModel(L.LightningModule):
         )
         self.raymarcher = EmissionAbsorptionRaymarcher()
         self.renderer_warp = renderer_warp
+
+        self.warp_class = warp_class
 
         # Instantiate the radiance field model.
         self.neural_radiance_field = nerf_model
@@ -191,7 +192,7 @@ class HandModel(L.LightningModule):
 
             masks_sampling=sampling_utils.sampling_mask_0_25(silhouettes),
             nerf_func=self.neural_radiance_field.forward,
-            warp_func=warp_points.warp_points,
+            warp_func=self.warp_class.warp_points,
 
             offset_net_func=self.offset_module.forward,
             curr_pose_id=manos['pose_id'],
@@ -303,7 +304,7 @@ class HandModel(L.LightningModule):
 
             masks_sampling=None,
             nerf_func=self.neural_radiance_field.batched_forward,
-            warp_func=warp_points.warp_points_batched,
+            warp_func=self.warp_class.warp_points_batched,
 
             offset_net_func=self.offset_module.batched_forward,
             curr_pose_id=manos['pose_id'],

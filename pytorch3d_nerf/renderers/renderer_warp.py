@@ -56,10 +56,20 @@ class RendererWarp(L.LightningModule):
         )
         rays_points_world = ray_bundle_to_ray_points(ray_bundle)
 
+        ray_directions_one_dir_per_ray = ray_bundle.directions
+
+        # expand ray directions, from one direction per ray to one direction per each point
+        spatial_size = rays_points_world.shape[:-1]
+        ray_directions = ray_directions_one_dir_per_ray[..., None, :].expand(
+            *spatial_size, ray_directions_one_dir_per_ray.shape[-1]
+        )
+
+
         if warp_func:
             # Warp the rays to the canonical view.
             ray_points_can_raw, ray_directions_can = warp_func(
                 rays_points_world,
+                ray_directions,
                 verts,
                 Ts,
             )
@@ -77,13 +87,14 @@ class RendererWarp(L.LightningModule):
         else:
             # no warping
             ray_points_can = rays_points_world
-            ray_directions_can_one_dir_per_ray = ray_bundle.directions
-
-            # expand ray directions, from one direction per ray to one direction per each point
-            spatial_size = ray_points_can.shape[:-1]
-            ray_directions_can = ray_directions_can_one_dir_per_ray[..., None, :].expand(
-                *spatial_size, ray_directions_can_one_dir_per_ray.shape[-1]
-            )
+            ray_directions_can = ray_directions
+            # ray_directions_can_one_dir_per_ray = ray_bundle.directions
+            #
+            # # expand ray directions, from one direction per ray to one direction per each point
+            # spatial_size = ray_points_can.shape[:-1]
+            # ray_directions_can = ray_directions_can_one_dir_per_ray[..., None, :].expand(
+            #     *spatial_size, ray_directions_can_one_dir_per_ray.shape[-1]
+            # )
 
         assert ray_points_can.isnan().any() == False
         assert ray_directions_can.isnan().any() == False

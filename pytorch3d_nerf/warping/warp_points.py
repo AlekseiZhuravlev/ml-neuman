@@ -1,89 +1,127 @@
 import torch
 
-def warp_points(
-        rays_points_world,
-        vertices,
-        Ts,
-):
-    """
-    Warps the rays_points_world to the canonical space using the T of the closest vertex
-    DO NOT MODIFY, USE DEBUG VERSION INSTEAD
-    """
-    orig_rays_points_world = rays_points_world.clone()
+class WarpCanonical(torch.nn.Module):
+    @staticmethod
+    def warp_points(
+            rays_points_world,
+            rays_directions_world,
+            vertices_posed,
+            Ts,
+    ):
+        """
+        Warps the rays_points_world to the canonical space using the T of the closest vertex
+        DO NOT MODIFY, USE DEBUG VERSION INSTEAD
+        """
+        orig_rays_points_world = rays_points_world.clone()
 
-    if len(orig_rays_points_world.shape) == 3:
-        rays_points_world = rays_points_world.unsqueeze(0)
+        if len(orig_rays_points_world.shape) == 3:
+            rays_points_world = rays_points_world.unsqueeze(0)
 
-    orig_shape = rays_points_world.shape
+        orig_shape = rays_points_world.shape
 
-    rays_points_world = rays_points_world.reshape(1, -1, 3)
+        rays_points_world = rays_points_world.reshape(1, -1, 3)
 
-    # get the transformation matrix of the closest vertex
-    distances = torch.cdist(rays_points_world, vertices)
-    res = torch.argmin(distances,dim=-1)
+        # get the transformation matrix of the closest vertex
+        distances = torch.cdist(rays_points_world, vertices_posed)
+        res = torch.argmin(distances,dim=-1)
 
-    T_inv = torch.inverse(Ts)
+        T_inv = torch.inverse(Ts)
 
-    # res torch.Size([1, 85504])
-    res = res.squeeze(0)
+        # res torch.Size([1, 85504])
+        res = res.squeeze(0)
 
-    # T_inv torch.Size([1, 778, 4, 4])
-    # index T_inv with res
-    T_inv_vert = T_inv[:, res, :, :]
+        # T_inv torch.Size([1, 778, 4, 4])
+        # index T_inv with res
+        T_inv_vert = T_inv[:, res, :, :]
 
-    # convert the points from pytorch3d space to xyz space
-    ray_points_xyz = torch.stack(
-        (-rays_points_world[..., 0], -rays_points_world[..., 1], rays_points_world[..., 2]),
-        -1
-    )
-    # add homogeneous coordinate
-    ray_points_xyz_homo = torch.cat([
-        ray_points_xyz,
-        torch.ones_like(ray_points_xyz[..., 0:1])
-    ], axis=-1)
+        # convert the points from pytorch3d space to xyz space
+        ray_points_xyz = torch.stack(
+            (-rays_points_world[..., 0], -rays_points_world[..., 1], rays_points_world[..., 2]),
+            -1
+        )
+        # add homogeneous coordinate
+        ray_points_xyz_homo = torch.cat([
+            ray_points_xyz,
+            torch.ones_like(ray_points_xyz[..., 0:1])
+        ], axis=-1)
 
-    # Ts torch.Size([1, 342016, 4, 4])
-    # ray_points_xyz torch.Size([1, 342016, 3])
+        # Ts torch.Size([1, 342016, 4, 4])
+        # ray_points_xyz torch.Size([1, 342016, 3])
 
-    # for each batch, perform torch.bmm. Unsqueeze from [4] to [4, 1] vector
-    ray_points_xyz_homo = ray_points_xyz_homo.unsqueeze(-1)
-    can_pts_xyz = torch.stack([torch.bmm(T_inv_vert[i], ray_points_xyz_homo[i]) for i in range(T_inv_vert.shape[0])], dim=0)
+        # for each batch, perform torch.bmm. Unsqueeze from [4] to [4, 1] vector
+        ray_points_xyz_homo = ray_points_xyz_homo.unsqueeze(-1)
+        can_pts_xyz = torch.stack([torch.bmm(T_inv_vert[i], ray_points_xyz_homo[i]) for i in range(T_inv_vert.shape[0])], dim=0)
 
-    # Squeeze from [4, 1] to [4] vector, drop homogeneous dimension
-    can_pts_xyz = can_pts_xyz.squeeze(-1)[..., :3]
+        # Squeeze from [4, 1] to [4] vector, drop homogeneous dimension
+        can_pts_xyz = can_pts_xyz.squeeze(-1)[..., :3]
 
-    # reshape can_pts to the input dimensions [B x N x 3] -> [B x N_rays x N_samples x 3]
-    can_pts_xyz = can_pts_xyz.reshape(orig_shape)
+        # reshape can_pts to the input dimensions [B x N x 3] -> [B x N_rays x N_samples x 3]
+        can_pts_xyz = can_pts_xyz.reshape(orig_shape)
 
-    # canonical direction = direction from previous ray sample to current
-    can_dirs_xyz = can_pts_xyz[..., 1:, :] - can_pts_xyz[..., :-1, :]
-    can_dirs_xyz = torch.cat([can_dirs_xyz, can_dirs_xyz[..., -1:, :]], dim=-2)
-    can_dirs_xyz = torch.nn.functional.normalize(
-        can_dirs_xyz, dim=-1
-    )
+        # canonical direction = direction from previous ray sample to current
+        can_dirs_xyz = can_pts_xyz[..., 1:, :] - can_pts_xyz[..., :-1, :]
+        can_dirs_xyz = torch.cat([can_dirs_xyz, can_dirs_xyz[..., -1:, :]], dim=-2)
+        can_dirs_xyz = torch.nn.functional.normalize(
+            can_dirs_xyz, dim=-1
+        )
 
-    can_pts_py3d = torch.stack(
-        (-can_pts_xyz[..., 0], -can_pts_xyz[..., 1], can_pts_xyz[..., 2]),
-        -1
-    )
-    can_dirs_py3d = torch.stack(
-        (-can_dirs_xyz[..., 0], -can_dirs_xyz[..., 1], can_dirs_xyz[..., 2]),
-        -1
-    )
+        can_pts_py3d = torch.stack(
+            (-can_pts_xyz[..., 0], -can_pts_xyz[..., 1], can_pts_xyz[..., 2]),
+            -1
+        )
+        can_dirs_py3d = torch.stack(
+            (-can_dirs_xyz[..., 0], -can_dirs_xyz[..., 1], can_dirs_xyz[..., 2]),
+            -1
+        )
 
-    # reshape can_pts and can_dirs to the input dimensions
-    if len(orig_rays_points_world.shape) == 3:
-        can_pts_py3d = can_pts_py3d.squeeze(0)
-        can_dirs_py3d = can_dirs_py3d.squeeze(0)
+        # reshape can_pts and can_dirs to the input dimensions
+        if len(orig_rays_points_world.shape) == 3:
+            can_pts_py3d = can_pts_py3d.squeeze(0)
+            can_dirs_py3d = can_dirs_py3d.squeeze(0)
 
-    return can_pts_py3d, can_dirs_py3d
+        return can_pts_py3d, can_dirs_py3d
+
+    @staticmethod
+    def warp_points_batched(
+            rays_points_world,
+            rays_directions_world,
+            vertices_posed,
+            Ts,
+            n_batches: int = 16,
+        ):
+            """
+            Args:
+                ray_points: torch.Size([1, 8192, 1, 32, 3])
+                ray_directions: torch.Size([1, 8192, 1, 32, 3])
+                n_batches: int = 16
+            """
+            batches_ray_points = torch.chunk(rays_points_world, chunks=n_batches, dim=1)
+            batches_ray_dirs = torch.chunk(rays_directions_world, chunks=n_batches, dim=1)
+
+            # For each batch, execute the standard forward pass and concatenate
+            can_pts_py3d = torch.tensor([], device=rays_points_world.device)
+            can_dirs_py3d = torch.tensor([], device=rays_points_world.device)
+
+            for batch_idx in range(len(batches_ray_points)):
+                can_pts_py3d_batch, can_dirs_py3d_batch = WarpCanonical.warp_points(
+                    rays_points_world=batches_ray_points[batch_idx],
+                    rays_directions_world=batches_ray_dirs[batch_idx],
+                    vertices_posed=vertices_posed,
+                    Ts=Ts,
+                )
+                can_pts_py3d = torch.cat([can_pts_py3d, can_pts_py3d_batch], dim=1)
+                can_dirs_py3d = torch.cat([can_dirs_py3d, can_dirs_py3d_batch], dim=1)
+
+            return can_pts_py3d, can_dirs_py3d
 
 
-def warp_points_batched(
-        rays_points_world,
-        vertices,
-        Ts,
-        n_batches: int = 16,
+    @staticmethod
+    def warp_points_batched_with_cpu(
+            rays_points_world,
+            rays_directions_world,
+            vertices_posed,
+            Ts,
+            n_batches: int = 16,
     ):
         """
         Args:
@@ -91,62 +129,37 @@ def warp_points_batched(
             ray_directions: torch.Size([1, 8192, 1, 32, 3])
             n_batches: int = 16
         """
+        assert rays_points_world.device.type == "cpu", "warp_points_batched_with_cpu only works with cpu tensors"
+
+
         batches_ray_points = torch.chunk(rays_points_world, chunks=n_batches, dim=1)
+        batches_ray_dirs = torch.chunk(rays_directions_world, chunks=n_batches, dim=1)
+
 
         # For each batch, execute the standard forward pass and concatenate
-        can_pts_py3d = torch.tensor([], device=rays_points_world.device)
-        can_dirs_py3d = torch.tensor([], device=rays_points_world.device)
+        can_pts_py3d = torch.tensor([], device='cpu')
+        can_dirs_py3d = torch.tensor([], device='cpu')
 
         for batch_idx in range(len(batches_ray_points)):
-            can_pts_py3d_batch, can_dirs_py3d_batch = warp_points(
-                rays_points_world=batches_ray_points[batch_idx],
-                vertices=vertices,
-                Ts=Ts,
+            rays_pts_chunk = batches_ray_points[batch_idx]
+            rays_dirs_chunk = batches_ray_dirs[batch_idx]
+
+            can_pts_py3d_batch, can_dirs_py3d_batch = WarpCanonical.warp_points(
+                rays_points_world=rays_pts_chunk.to('cuda'),
+                rays_directions_world=rays_dirs_chunk.to('cuda'),
+                vertices_posed=vertices_posed.to('cuda'),
+                Ts=Ts.to('cuda'),
             )
-            can_pts_py3d = torch.cat([can_pts_py3d, can_pts_py3d_batch], dim=1)
-            can_dirs_py3d = torch.cat([can_dirs_py3d, can_dirs_py3d_batch], dim=1)
+            can_pts_py3d = torch.cat([
+                can_pts_py3d,
+                can_pts_py3d_batch.to('cpu')
+            ], dim=1)
+            can_dirs_py3d = torch.cat([
+                can_dirs_py3d,
+                can_dirs_py3d_batch.to('cpu')
+            ], dim=1)
 
         return can_pts_py3d, can_dirs_py3d
-
-
-def warp_points_batched_with_cpu(
-        rays_points_world,
-        vertices,
-        Ts,
-        n_batches: int = 16,
-):
-    """
-    Args:
-        ray_points: torch.Size([1, 8192, 1, 32, 3])
-        ray_directions: torch.Size([1, 8192, 1, 32, 3])
-        n_batches: int = 16
-    """
-    assert rays_points_world.device.type == "cpu", "warp_points_batched_with_cpu only works with cpu tensors"
-
-
-    batches_ray_points = torch.chunk(rays_points_world, chunks=n_batches, dim=1)
-
-    # For each batch, execute the standard forward pass and concatenate
-    can_pts_py3d = torch.tensor([], device='cpu')
-    can_dirs_py3d = torch.tensor([], device='cpu')
-
-    for batch_idx in range(len(batches_ray_points)):
-        rays_pts_chunk = batches_ray_points[batch_idx]
-        can_pts_py3d_batch, can_dirs_py3d_batch = warp_points(
-            rays_points_world=rays_pts_chunk.to('cuda'),
-            vertices=vertices.to('cuda'),
-            Ts=Ts.to('cuda'),
-        )
-        can_pts_py3d = torch.cat([
-            can_pts_py3d,
-            can_pts_py3d_batch.to('cpu')
-        ], dim=1)
-        can_dirs_py3d = torch.cat([
-            can_dirs_py3d,
-            can_dirs_py3d_batch.to('cpu')
-        ], dim=1)
-
-    return can_pts_py3d, can_dirs_py3d
 
 
 
