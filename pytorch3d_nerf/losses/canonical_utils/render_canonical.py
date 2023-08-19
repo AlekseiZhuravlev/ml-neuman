@@ -71,7 +71,8 @@ class RendererCanonical(L.LightningModule):
         textures = TexturesVertex(verts_features=torch.ones((batch_size, vertex_num, 3)).float().to(device))
         meshes = Meshes(verts_py3d_repeated, faces_repeated, textures)
 
-        silhouettes_rgba = self.renderer_mesh(meshes)
+        with torch.no_grad():
+            silhouettes_rgba = self.renderer_mesh(meshes)
         silhouettes = (silhouettes_rgba[:, :, :, 3] > 0.1).unsqueeze(-1).float()
         return silhouettes
 

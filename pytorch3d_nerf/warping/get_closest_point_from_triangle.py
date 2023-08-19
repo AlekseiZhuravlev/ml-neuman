@@ -102,6 +102,7 @@ class TestPointMeshDistance(unittest.TestCase):
         bary = torch.tensor([s1, s2, s3])
         return bary
 
+
     @staticmethod
     def _is_inside_triangle(point: torch.Tensor, tri: torch.Tensor) -> torch.Tensor:
         """
@@ -216,7 +217,23 @@ class TestPointMeshDistance(unittest.TestCase):
     #####################################################################################
 
     @staticmethod
+    def edge_function(p, v0, v1):
+        return (p[:, 0] - v0[:, 0]) * (v1[:, 1] - v0[:, 1]) - (p[:, 1] - v0[:, 1]) * (v1[:, 0] - v0[:, 0])
+
+    @staticmethod
     def _point_to_bary_batched(point: torch.Tensor, tri: torch.Tensor) -> torch.Tensor:
+
+        v0, v1, v2 = tri.unbind(1)
+
+        area = TestPointMeshDistance.edge_function(v2, v0, v1) + 1e-12  # 2 x face area.
+        w0 = TestPointMeshDistance.edge_function(point, v1, v2) / area
+        w1 = TestPointMeshDistance.edge_function(point, v2, v0) / area
+        w2 = TestPointMeshDistance.edge_function(point, v0, v1) / area
+        return torch.stack([w0, w1, w2], dim=1)
+
+
+    @staticmethod
+    def _point_to_bary_batched_wrong(point: torch.Tensor, tri: torch.Tensor) -> torch.Tensor:
         """
         Computes the barycentric coordinates of point wrt triangle (tri)
         Note that point needs to live in the space spanned by tri = (a, b, c),
@@ -245,7 +262,7 @@ class TestPointMeshDistance(unittest.TestCase):
         d21 = torch.einsum('ij,ij->i', v2, v1)
 
 
-        denom = d00 * d11 - d01 * d01 + TestPointMeshDistance.eps()
+        denom = d00 * d11 - d01 * d01 + 1e-12#TestPointMeshDistance.eps()
         s2 = (d11 * d20 - d01 * d21) / denom
         s3 = (d00 * d21 - d01 * d20) / denom
         s1 = 1.0 - s2 - s3

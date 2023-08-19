@@ -1,12 +1,18 @@
 model:
+#  nerf_model:
+#    class_path: nerf_models.nerf_small_no_warp.NeuralRadianceField
+
   nerf_model:
-    class_path: nerf_models.nerf_small_no_warp.NeuralRadianceField
+    class_path: nerf_models.nerf_small_no_warp.NeuralRadianceFieldNoDir
+#    class_path: nerf_models.nerf_small_no_warp.NeuralRadianceField
 
   offset_module:
     class_path: offset.offset_module.OffsetModule
     init_args:
       offset_net:
         class_path: nerf_models.nerf_small_no_warp.OffsetNetworkNoDir
+        init_args:
+          input_dim: 4
       offset_scale: 0.3
       offset_delay: 0
 
@@ -19,7 +25,7 @@ model:
       loss_func:
         class_path: losses.huber.HuberLoss
       sil_loss_start_factor: 1
-      sil_loss_epochs: -1
+      sil_loss_epochs: 99999
 
   sil_loss_can:
     class_path: losses.sil_loss_world.SilhouetteLossWorld
@@ -42,8 +48,12 @@ model:
 
 
 data:
-  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/03
+#  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/03
 #  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/07_cam5_im12
+#  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/07_noOccl_cam60_im1_fist
+#  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/08_noOccl_cam60_im3/
+  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/09_noOccl_cam30_im3/
+
   bg_rm_dilation: -1
 
 
@@ -56,7 +66,8 @@ trainer:
     class_path: lightning.pytorch.loggers.TensorBoardLogger
     init_args:
       save_dir: ${trainer.default_root_dir}
-      version: testUVwarp_static
+#      version: testUVwarp_noDir_07_noOccl_cam60_im1_fist
+      version: testUVwarp_noDir_silLoss_09_noOccl_cam30_im3
 #      version: testOffsetNet_small_colorLoss_dynamic_delay0_lr5e-5
 
   strategy:
@@ -64,4 +75,26 @@ trainer:
     init_args:
       find_unused_parameters: True
 
+
+# create 3 datasets
+# 1 with fist, 60 cameras
+# 2 with 3 poses, 60 cameras each
+# 3 with 15 poses, 30 cameras each
+# 4 one pose, 60 cameras
+
+# test canonical warp on 3 datasets
+# test uv warp with directions on 3 datasets
+# test uv warp w/o directions on 3 datasets
+
 # TODO: check how Ts are created in SMPL, can we manually create more?
+
+# Today:
+# TODO: run uv warp with sil loss
+# TODO: check closest point finding with cpu alternative
+# TODO: barycentric interpolation for T matrices
+# TODO: run canonical warp with bary interp, all losses
+
+# Later:
+# TODO: implement kaolin loss for canonical warping - it will supervise offset net
+# todo: train uv warp with pose conditioning
+

@@ -107,6 +107,11 @@ class InterhandToNeumanConverter:
         n_images = min(n_images_per_camera, self.max_images_per_camera)
 
         for k_image_local_idx in tqdm(range(n_images)):
+
+            if n_images == 1:
+                print('n_images == 1, setting k_image_local_idx to 1')
+                k_image_local_idx = 1
+
             j_image_in_folder = self.every_n_frames * k_image_local_idx
 
             for i_camera, camera in enumerate(self.cameras_list):
@@ -183,12 +188,13 @@ if __name__ == '__main__':
         basefolder='/home/azhuavlev/Desktop/Data/InterHand',
         split='test',
         capture_n='0',
-        pose='ROM04_LT_Occlusion',
+        pose='ROM03_LT_No_Occlusion',
         cameras_list=None,#['400262', '400263', '400264', '400265', '400284'],
-        experiment_n='07_cam5_im12',
-        max_images_per_camera=12,
-        max_cameras=5,
-        every_n_frames=10,
+        experiment_n='09_noOccl_cam30_im3',
+        max_images_per_camera=3,
+        max_cameras=30,
+        every_n_frames=100,
 
     )
+    # TODO check black images
     converter.copy_images()

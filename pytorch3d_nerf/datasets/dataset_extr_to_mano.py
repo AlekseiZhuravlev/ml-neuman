@@ -227,7 +227,8 @@ class NeumanDataset(torch.utils.data.Dataset):
 
     def create_zero_pose_silhouettes(self):
 
-        device='cuda' if torch.cuda.is_available() else 'cpu'
+        # device='cuda' if torch.cuda.is_available() else 'cpu'
+        device = 'cpu'
         cameras = FoVPerspectiveCameras(
             R=self.Rs_can,
             T=self.Ts_can,
@@ -253,6 +254,7 @@ class NeumanDataset(torch.utils.data.Dataset):
     def create_silhouettes(self):
         device='cuda' if torch.cuda.is_available() else 'cpu'
         # device='cpu'
+        print('creating silhouettes, device: ', device)
 
         cameras = PerspectiveCameras(
             R=torch.stack([camera_params['R_pytorch3d'] for camera_params in self.camera_params_training], dim=0),
