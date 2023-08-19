@@ -15,7 +15,7 @@ class TestPointMeshDistance(unittest.TestCase):
 
     @staticmethod
     def eps():
-        return 1e-8
+        return 1e-12
 
     @staticmethod
     def init_meshes_clouds(

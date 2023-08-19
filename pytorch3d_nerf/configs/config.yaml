@@ -86,10 +86,10 @@ trainer:
 # test uv warp with directions on 3 datasets
 # test uv warp w/o directions on 3 datasets
 
-# TODO: check how Ts are created in SMPL, can we manually create more?
+# check how Ts are created in SMPL, can we manually create more? code is too difficult to understand
 
 # Today:
-# TODO: run uv warp with sil loss
+# run uv warp with sil loss
 # TODO: check closest point finding with cpu alternative
 # TODO: barycentric interpolation for T matrices
 # TODO: run canonical warp with bary interp, all losses
