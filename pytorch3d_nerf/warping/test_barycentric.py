@@ -1,3 +1,39 @@
+import os
+import sys
+import time
+import json
+import glob
+import torch
+import math
+import matplotlib.pyplot as plt
+import numpy as np
+from PIL import Image
+from IPython import display
+from tqdm.notebook import tqdm
+
+# Data structures and functions for rendering
+from pytorch3d.structures import Volumes
+from pytorch3d.transforms import so3_exp_map
+from pytorch3d.renderer import (
+    FoVPerspectiveCameras,
+    NDCMultinomialRaysampler,
+    MonteCarloRaysampler,
+    EmissionAbsorptionRaymarcher,
+    ImplicitRenderer,
+    RayBundle,
+    ray_bundle_to_ray_points,
+)
+import sys
+import trimesh
+
+
+sys.path.append('/home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf')
+from mano_custom import mano_pytorch3d
+
+device = torch.device("cuda:0")
+import kaolin
+import warping.kaolin_test as kaolin_test
+
 import warping.get_point_mesh_face_distance as get_point_mesh_face_distance
 import pytorch3d
 import warping.get_closest_point_from_triangle as get_closest_point_from_triangle
@@ -10,167 +46,94 @@ import pytorch3d
 import igl
 
 
-def test_pytorch3d_closest_pt(mesh, points):
-    distances, face_ids = get_point_mesh_face_distance.point_mesh_face_distance(
-        mesh,
-        pytorch3d.structures.Pointclouds(points=points)
-    )
-    closest_pts = []
-    distances_v2 = []
-    for i in range(points.shape[1]):
-        dist_v2, closest_point = get_closest_point_from_triangle.TestPointMeshDistance._point_to_tri_distance(
-            points[0][i],
-            mesh.verts_packed()[mesh.faces_packed()[face_ids[i]]]
-        )
-        closest_pts.append(closest_point)
-        distances_v2.append(dist_v2)
-    closest_pts = torch.stack(closest_pts)
-    distances_v2 = torch.stack(distances_v2)
-
-    # get index where (distances-distances_v2).abs() is max
-    # indx_max = (distances-distances_v2).abs().argmax()
-    # print('max diff', (distances-distances_v2).abs().max())
-    # print('max diff index', indx_max)
-    # print('distances', distances[indx_max])
-    # print('distances_v2', distances_v2[indx_max])
-
-    return distances_v2, closest_pts
-
-def test_github_closest_pt(mesh, points):
-    distances, face_ids = get_point_mesh_face_distance.point_mesh_face_distance(
-        mesh,
-        pytorch3d.structures.Pointclouds(points=points)
-    )
-    clspt_gh = get_closest_point_on_mesh_github.ProjectMesh2Point(mesh)
-    closest_points, dist_v3 = clspt_gh(
-        points,
-        face_ids.unsqueeze(0),
-    )
-    return closest_points
-
 def test_pytorch3d_closest_pt_batched(mesh, points, vertices_repaired, faces_repaired):
-    distances, face_ids = get_point_mesh_face_distance.point_mesh_face_distance(
+
+    # ground truth data from igl
+    distances_igl, closest_faces_igl, closest_pts_igl = igl.signed_distance(
+        points.cpu().numpy()[0],
+        mesh.verts_packed().cpu().numpy(),
+        mesh.faces_packed().cpu().numpy(),
+    )
+
+    # closest faces
+    distances_point_face, face_ids = get_point_mesh_face_distance.point_mesh_face_distance(
         mesh,
         pytorch3d.structures.Pointclouds(points=points)
     )
-    distances_v2, closest_points = get_closest_point_from_triangle.TestPointMeshDistance._point_to_tri_distance_batched(
+    # closest points from closest faces
+    distances_to_closest_pt, closest_points = get_closest_point_from_triangle.TestPointMeshDistance._point_to_tri_distance_batched(
         points[0],
         mesh.verts_packed()[mesh.faces_packed()[face_ids]]
     )
+    print(((closest_points.cpu() - closest_pts_igl).abs() > 1e-2).int().sum())
+    assert ((closest_points.cpu() - closest_pts_igl).abs() < 5e-2).all(), 'closest_points - closest_pts_igl'
+
+    # closest points to barycentric coordinates
     closest_points_bary = get_closest_point_from_triangle.TestPointMeshDistance._point_to_bary_batched(
         closest_points,
         mesh.verts_packed()[mesh.faces_packed()[face_ids]]
     )
-    print(closest_points.detach().cpu().numpy().dtype)
-    print(mesh.verts_packed()[mesh.faces_packed()[face_ids]].detach().cpu().numpy()[:, 0, :].dtype)
+    # ground truth baricentric coordinates from igl
     closest_points_bary_igl = igl.barycentric_coordinates_tri(
         closest_points.detach().cpu().numpy().astype(np.float64),
         mesh.verts_packed()[mesh.faces_packed()[face_ids]].detach().cpu().numpy()[:, 0, :].astype(np.float64),
         mesh.verts_packed()[mesh.faces_packed()[face_ids]].detach().cpu().numpy()[:, 1, :].astype(np.float64),
         mesh.verts_packed()[mesh.faces_packed()[face_ids]].detach().cpu().numpy()[:, 2, :].astype(np.float64),
     )
-
-    closest_points_bary_unbatched = []
-    for i in range(closest_points.shape[0]):
-        closest_points_bary_unbatched.append(
-            get_closest_point_from_triangle.TestPointMeshDistance._point_to_bary(
-                closest_points[i],
-                mesh.verts_packed()[mesh.faces_packed()[face_ids[i]]]
-            )
-        )
-    closest_points_bary_unbatched = torch.stack(closest_points_bary_unbatched)
-
-    closest_points_bary_trimesh = trimesh.triangles.points_to_barycentric(
-        mesh.verts_packed()[mesh.faces_packed()[face_ids]].detach().cpu().numpy(),
-        closest_points.detach().cpu().numpy(),
-        method='cross'
-    )
-
-    # import pytorch3d
-
-
-    closest_points_bary_another_py3d = []
-    for i in range(closest_points.shape[0]):
-        closest_points_bary_another_py3d.append(
-            torch.tensor(
-            barycentric_py3d.barycentric_coordinates(
-                closest_points[i],
-                mesh.verts_packed()[mesh.faces_packed()[face_ids[i]]][0],
-                mesh.verts_packed()[mesh.faces_packed()[face_ids[i]]][1],
-                mesh.verts_packed()[mesh.faces_packed()[face_ids[i]]][2],
-            ),
-                device = closest_points.device
-            )
-        )
-    closest_points_bary_another_py3d = torch.stack(closest_points_bary_another_py3d)
-
-
     # assert that each barycentric coordinate is between 0 and 1
-    assert (closest_points_bary >= -1e-1).all() and (closest_points_bary <= 1 + 1e-1).all()
+    assert (closest_points_bary >= -0.1).all() and (closest_points_bary <= 1.1).all()
     closest_points_bary = closest_points_bary.clamp(0, 1)
 
-    print('closest_points_bary', closest_points_bary)
-    print('closest_points_bary_igl', closest_points_bary_igl)
-    print('closest_points_bary_trimesh', closest_points_bary_trimesh)
+    assert ((closest_points_bary.cpu() - torch.from_numpy(closest_points_bary_igl)).abs() < 0.01).all(), 'distance_bary_py3d_igl'
 
-    distance_bary_py3d_igl = (closest_points_bary - torch.from_numpy(closest_points_bary_igl).to(closest_points_bary.device)).abs().sum(dim=-1)
-    print('distance_bary_py3d_igl', distance_bary_py3d_igl.sum())
-    distance_bary_batched_unbatched = (closest_points_bary - closest_points_bary_unbatched.to(closest_points_bary.device)).abs().sum(dim=-1).sum()
-    print('distance_bary_batched_unbatched', distance_bary_batched_unbatched)
-    distance_bary_py3d_trimesh = (closest_points_bary - torch.from_numpy(closest_points_bary_trimesh).to(closest_points_bary.device)).abs().sum(dim=-1)
-    print('distance_bary_py3d_trimesh', distance_bary_py3d_trimesh.sum())
-    distance_bary_py3d_another_py3d = (closest_points_bary - closest_points_bary_another_py3d.to(closest_points_bary.device)).abs().sum(dim=-1).sum()
-    print('distance_bary_py3d_another_py3d', distance_bary_py3d_another_py3d.sum())
-    distance_another_py3d_igl = (closest_points_bary_another_py3d - torch.from_numpy(closest_points_bary_igl).to(closest_points_bary.device)).abs().sum(dim=-1).sum()
-    print('distance_another_py3d_igl', distance_another_py3d_igl.sum())
-    distance_unbatched_igl = (closest_points_bary_unbatched.to(closest_points_bary.device) - torch.from_numpy(closest_points_bary_igl).to(closest_points_bary.device)).abs().sum(dim=-1).sum()
-    print('distance_unbatched_igl', distance_unbatched_igl.sum())
+    is_inside = kaolin.ops.mesh.check_sign(vertices_repaired, faces_repaired, points)
+    assert is_inside.int().sum() > 0
 
+    # multiply distances with -1 if point is inside
+    distances_to_closest_pt_signed = distances_to_closest_pt * (is_inside.int() * -2 + 1)
 
-    ind_wrong_bary = distance_bary_py3d_igl > 1e-2
-
-    print('wrong bary igl', closest_points_bary_igl[ind_wrong_bary.cpu()])
-    print('wrong bary py3d', closest_points_bary[ind_wrong_bary])
-
-    print('points wrong bary', closest_points[ind_wrong_bary])
-    print('vertices wrong bary', mesh.verts_packed()[mesh.faces_packed()[face_ids[ind_wrong_bary]]])
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    print(((distances_to_closest_pt_signed.cpu() - distances_igl).abs() > 1e-2).int().sum(),
+          'distances_to_closest_pt_signed - distances_igl')
+    assert ((distances_to_closest_pt_signed.cpu() - distances_igl).abs() < 5e-2).all(), 'distances_to_closest_pt_signed - distances_igl'
 
 
     uv_finder = get_vertex_uv.VertexUVFinder().to(closest_points_bary.device)
-
     closest_pts_uv = uv_finder.get_point_uv(closest_points_bary, face_ids)
 
-    is_inside = kaolin.ops.mesh.check_sign(vertices_repaired, faces_repaired, closest_points.unsqueeze(0))
-    print('is_inside', is_inside.int().sum())
-    # multiply distances with -1 if point is inside
-    distances_v2 = distances_v2 * (is_inside.int() * -2 + 1)
-
-    return distances_v2, closest_points, closest_pts_uv, closest_points_bary
+    return distances_to_closest_pt_signed, closest_points, closest_pts_uv, closest_points_bary
 
 
-if __name__ == '__main__':
+def test_closest_point_finding():
+    kaolin_test.test_kaolin()
+    hand_model = mano_pytorch3d.create_mano_custom(return_right_hand=False)
+
+    faces_zero_pose = torch.from_numpy(hand_model.faces.astype(np.int32))[None, :, :]
+    verts_zero_pose = hand_model.get_flat_hand_vertices_pytorch3d('cpu')
+
+    mesh = trimesh.Trimesh(vertices=verts_zero_pose[0], faces=faces_zero_pose[0])
+    boundary_vertices = [92, 38, 122, 118, 117, 119, 120, 108, 79, 78, 121, 214, 215, 279, 239, 234][::-1]
+
+    centroid = mesh.vertices[boundary_vertices].mean(axis=0)
+    vertices_repaired = np.append(verts_zero_pose[0], centroid[None, :], axis=0)
+
+    new_faces = []
+    for i in range(len(boundary_vertices) - 1):
+        next_i = i + 1 % len(boundary_vertices)
+        new_faces.append([len(vertices_repaired) - 1, boundary_vertices[i], boundary_vertices[next_i]])
+    new_faces.append([len(vertices_repaired) - 1, boundary_vertices[len(boundary_vertices) - 1], boundary_vertices[0]])
+
+    faces_repaired = np.append(faces_zero_pose[0], new_faces, axis=0)
+
+    mesh_repaired_trimesh = trimesh.Trimesh(vertices=vertices_repaired, faces=faces_repaired)
+    assert mesh_repaired_trimesh.is_watertight
+
     mesh_not_repaired = pytorch3d.structures.Meshes(
         verts=verts_zero_pose,
         faces=faces_zero_pose,
     )
 
     # points_to_query = pytorch3d.ops.sample_points_from_meshes(mesh_not_repaired, 1000000) * 2
-    points_to_query = torch.rand(1, 5000, 3) * 0.5 - 0.25
+    points_to_query = torch.rand(1, 50000, 3) * 0.5 - 0.25
 
     mesh_not_repaired = mesh_not_repaired.to(device)
     points_to_query = points_to_query.to(device)
@@ -181,10 +144,7 @@ if __name__ == '__main__':
         torch.tensor(vertices_repaired).unsqueeze(0).to(device),
         torch.tensor(faces_repaired).to(device),
     )
+    print('all tests passed')
 
-    distances_unbatched, closest_pts_unbatched = test_pytorch3d_closest_pt(
-        mesh_not_repaired,
-        points_to_query,
-    )
-
-    # fixme: I am not entirely sure if everything is correct. Run experiments to check
+if __name__ == '__main__':
+    test_closest_point_finding()

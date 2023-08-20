@@ -113,7 +113,7 @@ class WarpUV(torch.nn.Module):
 
         closest_pts_uv = self.uv_finder.get_point_uv(closest_points_bary, face_ids)
 
-        is_inside = kaolin.ops.mesh.check_sign(vertices_repaired, self.faces_repaired[0], closest_points.unsqueeze(0))
+        is_inside = kaolin.ops.mesh.check_sign(vertices_repaired, self.faces_repaired[0], points)
 
         # assert that some points are inside
         assert is_inside.sum() > 0

@@ -90,7 +90,8 @@ trainer:
 
 # Today:
 # run uv warp with sil loss
-# TODO: check closest point finding with cpu alternative
+# TODO: check closest point finding with cpu alternative - still needs debugging
+# TODO: make assert for closest point finding
 # TODO: barycentric interpolation for T matrices
 # TODO: run canonical warp with bary interp, all losses
 
