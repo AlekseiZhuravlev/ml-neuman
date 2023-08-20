@@ -91,6 +91,6 @@ def point_mesh_face_distance(meshes: Meshes, pcls: Pointclouds):
 
     # point to face distance: shape (P,)
     point_to_face_dist, closest_face_idxs = point_face_distance_custom(
-        points, points_first_idx, tris, tris_first_idx, max_points
+        points, points_first_idx, tris, tris_first_idx, max_points, #1e-1
     )
     return point_to_face_dist, closest_face_idxs
