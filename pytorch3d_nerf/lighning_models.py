@@ -27,7 +27,9 @@ from pytorch3d.renderer import (
 # Data structures and functions for rendering
 from tqdm import tqdm
 
-import sampling_utils
+from pytorch3d_nerf.sampling import mask_random_sil
+from pytorch3d_nerf.sampling import mask_lpips
+
 from helpers import sample_images_at_mc_locs
 from losses import huber
 from losses.canonical_utils.cameras_canonical import create_canonical_cameras
@@ -36,6 +38,8 @@ from losses.sil_loss_can import SilhouetteLossCanonical
 from losses.sil_loss_world import SilhouetteLossWorld
 from mano_custom import mano_pytorch3d
 from renderers.renderer_warp import RendererWarp
+
+import torchmetrics
 
 
 class HandModel(L.LightningModule):
@@ -121,6 +125,13 @@ class HandModel(L.LightningModule):
         self.sil_loss_world = sil_loss_world
         self.sil_loss_can = sil_loss_can
 
+        self.metrics_train = torchmetrics.MetricCollection({
+
+
+        })
+
+
+
         # fixme: this is a hack to make the offset net work
         self.automatic_optimization = False
 
@@ -190,7 +201,8 @@ class HandModel(L.LightningModule):
             verts=manos['verts'],
             Ts=manos['Ts'],
 
-            masks_sampling=sampling_utils.sampling_mask_0_25(silhouettes),
+            # masks_sampling=mask_random_sil.sampling_mask_0_25(silhouettes),
+            masks_sampling=mask_lpips.sampling_mask_lpips(silhouettes),
             nerf_func=self.neural_radiance_field.forward,
             warp_func=self.warp_class.warp_points,
 
@@ -204,40 +216,40 @@ class HandModel(L.LightningModule):
         # Raysampling in canonical space
         ###########################################################################
 
-        batch_cameras_can = FoVPerspectiveCameras(
-            R=camera_params['R_can'],
-            T=camera_params['t_can'],
-            znear=0.01,
-            zfar=10,
-            device=self.device,
-        )
-
-        rendered_images_can, rendered_silhouettes_can, ray_bundle_can = self.renderer_warp.forward(
-            raysampler=self.raysampler_train,
-            batch_cameras=batch_cameras_can,
-            verts=manos['verts_zero'],
-            Ts=None,
-
-            masks_sampling=sampling_utils.sampling_mask_25_0_25(silhouettes_can),
-            nerf_func=self.neural_radiance_field.forward,
-            warp_func=None,
-
-            offset_net_func=None,
-            curr_pose_id=None,
-            logger=None,
-            curr_epoch=self.current_epoch,
-        )
+        # batch_cameras_can = FoVPerspectiveCameras(
+        #     R=camera_params['R_can'],
+        #     T=camera_params['t_can'],
+        #     znear=0.01,
+        #     zfar=10,
+        #     device=self.device,
+        # )
+        #
+        # rendered_images_can, rendered_silhouettes_can, ray_bundle_can = self.renderer_warp.forward(
+        #     raysampler=self.raysampler_train,
+        #     batch_cameras=batch_cameras_can,
+        #     verts=manos['verts_zero'],
+        #     Ts=None,
+        #
+        #     masks_sampling=sampling_utils.sampling_mask_25_0_25(silhouettes_can),
+        #     nerf_func=self.neural_radiance_field.forward,
+        #     warp_func=None,
+        #
+        #     offset_net_func=None,
+        #     curr_pose_id=None,
+        #     logger=None,
+        #     curr_epoch=self.current_epoch,
+        # )
 
         ###########################################################################
         # Silhouette loss, canonical space
         ###########################################################################
 
-        sil_err_can, sil_err_unconstrained_can, sil_loss_factor_can = self.sil_loss_can.forward(
-            rendered_silhouettes_can,
-            silhouettes_can,
-            ray_bundle_can,
-            self.current_epoch,
-        )
+        # sil_err_can, sil_err_unconstrained_can, sil_loss_factor_can = self.sil_loss_can.forward(
+        #     rendered_silhouettes_can,
+        #     silhouettes_can,
+        #     ray_bundle_can,
+        #     self.current_epoch,
+        # )
 
         ###########################################################################
         # Silhouette loss, world space
@@ -265,14 +277,22 @@ class HandModel(L.LightningModule):
         )
 
         ###########################################################################
+        # Calculate and log the metrics
+        ###########################################################################
 
-        # Log the errors.
+        # TODO: reshape rendered images and colors at rays
+
+        ###########################################################################
+        # Log the errors
+        ###########################################################################
         self.log('color_loss', color_err, prog_bar=True, logger=True)
         self.log('sil_loss_world', sil_err_world, prog_bar=True, logger=True)
-        self.log('sil_loss_can', sil_err_can, prog_bar=True, logger=True)
-        self.log('offset_mean', self.offset_module.mean_offset, prog_bar=True, logger=True)
+        # self.log('sil_loss_can', sil_err_can, prog_bar=True, logger=True)
+        # self.log('offset_mean', self.offset_module.mean_offset, prog_bar=True, logger=True)
 
-        loss = color_err + sil_err_world + sil_err_can + 0.1 * self.offset_module.mean_offset
+
+        # loss = color_err + sil_err_world + sil_err_can + 0.1 * self.offset_module.mean_offset
+        loss = color_err + sil_err_world
 
         loss.backward()
         opt.step()

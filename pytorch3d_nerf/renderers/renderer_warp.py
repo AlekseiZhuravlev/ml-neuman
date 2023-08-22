@@ -48,12 +48,18 @@ class RendererWarp(L.LightningModule):
         # Ray sampling in world space + warping
         ###############################################################
 
+        assert masks_sampling.sum() <= raysampler.n_rays_per_image
+
         ray_bundle = raysampler(
             cameras=batch_cameras,
             mask=masks_sampling,
             min_depth=depths.min() * 0.95,
             max_depth=depths.max() * 1.05,
         )
+        print("ray_bundle", ray_bundle)
+        exit(0)
+
+
         rays_points_world = ray_bundle_to_ray_points(ray_bundle)
 
         ray_directions_one_dir_per_ray = ray_bundle.directions
