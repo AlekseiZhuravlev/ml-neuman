@@ -49,10 +49,10 @@ model:
 
 data:
 #  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/03
-#  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/07_cam5_im12
+  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/07_cam5_im12
 #  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/07_noOccl_cam60_im1_fist
 #  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/08_noOccl_cam60_im3/
-  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/09_noOccl_cam30_im3/
+#  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/09_noOccl_cam30_im3/
 
   bg_rm_dilation: -1
 
@@ -67,7 +67,7 @@ trainer:
     init_args:
       save_dir: ${trainer.default_root_dir}
 #      version: testUVwarp_noDir_07_noOccl_cam60_im1_fist
-      version: testUVwarp_noDir_silLoss_09_noOccl_cam30_im3
+      version: testUVwarp_newWarp_07_cam5_im12_2gpu
 #      version: testOffsetNet_small_colorLoss_dynamic_delay0_lr5e-5
 
   strategy:
@@ -87,15 +87,29 @@ trainer:
 # test uv warp w/o directions on 3 datasets
 
 # check how Ts are created in SMPL, can we manually create more? code is too difficult to understand
+# run uv warp with sil loss
+# check closest point finding with cpu alternative - still needs debugging
+# make assert for closest point finding
 
 # Today:
-# run uv warp with sil loss
-# TODO: check closest point finding with cpu alternative - still needs debugging
-# TODO: make assert for closest point finding
-# TODO: barycentric interpolation for T matrices
-# TODO: run canonical warp with bary interp, all losses
+# todo: add metrics, PSNR, LPIPS(x1000), FID
+# todo: sampling over a patch
+# todo: lpips
+# todo: train uv warp with pose conditioning
+# todo: add viewing directions
+# todo: for datasets, handle black frames
+
+# Experiments
+# repeat on static pose, add one challenging pose - not fist
+# repeat on 3 poses, 30 cameras each
+# repeat on 10 poses, 30 cameras each
 
 # Later:
-# TODO: implement kaolin loss for canonical warping - it will supervise offset net
-# todo: train uv warp with pose conditioning
+# todo: ask about color calibration parameters g, b
+
+# Later:
+# implement kaolin loss for canonical warping - it will supervise offset net
+# barycentric interpolation for T matrices
+# run canonical warp with bary interp, all losses
+
 
