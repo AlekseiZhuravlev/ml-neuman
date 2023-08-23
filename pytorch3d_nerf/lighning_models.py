@@ -40,7 +40,7 @@ from mano_custom import mano_pytorch3d
 from renderers.renderer_warp import RendererWarp
 
 import torchmetrics
-
+import pytorch3d
 
 class HandModel(L.LightningModule):
     def __init__(self,
@@ -270,6 +270,82 @@ class HandModel(L.LightningModule):
             images.permute(0, 3, 1, 2),
             ray_bundle.xys,
         ).permute(0, 2, 3, 1)
+
+        print('colors_at_rays', colors_at_rays.shape)
+        # exit(0)
+
+        print("ray_bundle", ray_bundle)
+        print('xys', ray_bundle.xys.shape)
+        import matplotlib.pyplot as plt
+        fig = plt.figure()
+        ax = fig.add_subplot(131)
+
+        xys = ray_bundle.xys.reshape(-1, 2).cpu().numpy()
+        colors_at_xys = colors_at_rays.reshape(-1, 3).cpu().numpy()
+
+        xys[:, 0] = ((xys[:, 0] - xys[:, 0].min()) / (xys[:, 0].max() - xys[:, 0].min())) * 64
+        xys[:, 1] = ((xys[:, 1] - xys[:, 1].min()) / (xys[:, 1].max() - xys[:, 1].min())) * 64
+
+        xys_int = xys.astype(np.int32)
+        print('xys', xys)
+        print('xys_int', xys_int)
+        print('xys - int', np.sum(np.abs(xys_int - xys)))
+
+        img_orig_patch = np.zeros((64, 64, 3))
+        img_orig_patch[xys_int[:, 0], xys_int[:, 1]] = colors_at_xys
+
+        ax.imshow(img_orig_patch)
+
+        colors_at_rays_rgba = torch.cat([colors_at_rays, torch.ones_like(colors_at_rays[..., 0:1])], dim=-1)
+
+        # for i in range(len(xys)):
+        #     ax.plot(xys[i, 0], xys[i, 1], c=colors_at_xys[i], marker='o')
+
+        ax = fig.add_subplot(132)
+
+        from pytorch3d.implicitron.tools.rasterize_mc import rasterize_mc_samples
+
+        print('colors_at_rays', colors_at_rays.shape)
+        print('ray_bundle.xys', ray_bundle.xys.reshape(1, -1, 2).shape)
+        print('colors_at_rays_rgba', colors_at_rays_rgba.reshape(1, -1, 4).shape)
+
+        data_rendered, render_mask = rasterize_mc_samples(
+            ray_bundle.xys.reshape(1, -1, 2),
+            colors_at_rays_rgba.reshape(1, -1, 4),
+            (self.render_size_x, self.render_size_y)
+        )
+        print('data_rendered', data_rendered)
+        print('data_rendered', data_rendered.shape)
+        print('render_mask', render_mask)
+        print('render_mask', render_mask.shape)
+
+        # torch.Size([1, 4, 64, 64]) to torch.Size([64, 64, 4])
+        data_rendered = data_rendered.squeeze(0).permute(1, 2, 0)
+        mask_rendered = render_mask[0][0]
+
+        mask_more0 = mask_rendered > 0
+
+        # select only the pixels that are inside the mask
+        data_rendered = data_rendered[mask_more0]
+        print('data_rendered', data_rendered.shape)
+
+        ax.imshow(data_rendered.cpu().numpy())
+
+        ax = fig.add_subplot(133)
+
+        ax.imshow(mask_rendered.cpu().numpy())
+
+        # ax.imshow(img_orig_patch.cpu().numpy())
+        # ax = fig.add_subplot(122)
+
+        #
+        # ax.plot(xys[:, 0], xys[:, 1], 'o')
+        plt.savefig(f"/home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf/sampling/mask_lpips.png")
+
+        exit(0)
+
+
+
 
         color_err = self.loss_func_color(
             rendered_images,

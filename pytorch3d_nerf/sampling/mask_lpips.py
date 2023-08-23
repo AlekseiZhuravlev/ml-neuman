@@ -41,10 +41,10 @@ def sampling_mask_lpips(silhouettes):
     patch_mask[
         top_left_idx_2d[0]:top_left_idx_2d[0] + patch_size,
         top_left_idx_2d[1]:top_left_idx_2d[1] + patch_size
-    ] = 1.0
+    ] = 1
 
     # make sure we selected only patch_size x patch_size region
-    assert patch_mask.sum() == patch_size ** 2
+    assert patch_mask.sum() == patch_size ** 2, f'patch_mask.sum() = {patch_mask.sum()}, patch_size ** 2 = {patch_size ** 2}'
 
     return patch_mask.unsqueeze(0)
 

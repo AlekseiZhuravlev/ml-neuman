@@ -9,7 +9,6 @@ from pytorch3d.renderer import (
     RayBundle,
     ray_bundle_to_ray_points,
 )
-import sampling_utils
 import lightning as L
 
 class RendererWarp(L.LightningModule):
@@ -48,7 +47,8 @@ class RendererWarp(L.LightningModule):
         # Ray sampling in world space + warping
         ###############################################################
 
-        assert masks_sampling.sum() <= raysampler.n_rays_per_image
+        if masks_sampling is not None:
+            assert masks_sampling.sum() >= raysampler._n_rays_per_image
 
         ray_bundle = raysampler(
             cameras=batch_cameras,
@@ -56,9 +56,6 @@ class RendererWarp(L.LightningModule):
             min_depth=depths.min() * 0.95,
             max_depth=depths.max() * 1.05,
         )
-        print("ray_bundle", ray_bundle)
-        exit(0)
-
 
         rays_points_world = ray_bundle_to_ray_points(ray_bundle)
 
