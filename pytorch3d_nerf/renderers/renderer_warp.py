@@ -22,7 +22,7 @@ class RendererWarp(L.LightningModule):
 
     def forward(
             self,
-            raysampler,
+            raysampling_func,
             batch_cameras,
             verts,
             Ts,
@@ -47,10 +47,7 @@ class RendererWarp(L.LightningModule):
         # Ray sampling in world space + warping
         ###############################################################
 
-        if masks_sampling is not None:
-            assert masks_sampling.sum() >= raysampler._n_rays_per_image
-
-        ray_bundle = raysampler(
+        ray_bundle = raysampling_func(
             cameras=batch_cameras,
             mask=masks_sampling,
             min_depth=depths.min() * 0.95,

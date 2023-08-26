@@ -18,6 +18,10 @@ def sampling_mask_lpips(silhouettes):
     # find intersection of sil_dilated and sil_shifted_up
     sil_intersection = sil_dilated[0, 0] * sil_shifted_up
 
+    # set pixels between right border and patch_size to 0, and same for bottom border
+    sil_intersection[:, -patch_size:] = 0.0
+    sil_intersection[-patch_size:, :] = 0.0
+
     # erode intersection and get border regions
     sil_intersection_usq = sil_intersection.unsqueeze(0).unsqueeze(0)
     eroded_kornia_0_25 = sil_intersection_usq - kmorph.erosion(

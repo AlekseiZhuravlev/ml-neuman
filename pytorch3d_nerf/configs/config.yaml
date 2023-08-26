@@ -3,8 +3,8 @@ model:
 #    class_path: nerf_models.nerf_small_no_warp.NeuralRadianceField
 
   nerf_model:
-    class_path: nerf_models.nerf_small_no_warp.NeuralRadianceFieldNoDir
-#    class_path: nerf_models.nerf_small_no_warp.NeuralRadianceField
+#    class_path: nerf_models.nerf_small_no_warp.NeuralRadianceFieldNoDir
+    class_path: nerf_models.nerf_small_no_warp.NeuralRadianceField
 
   offset_module:
     class_path: offset.offset_module.OffsetModule
@@ -49,8 +49,8 @@ model:
 
 data:
 #  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/03
-  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/07_cam5_im12
-#  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/07_noOccl_cam60_im1_fist
+#  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/07_cam5_im12
+  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/07_noOccl_cam60_im1_fist
 #  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/08_noOccl_cam60_im3/
 #  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/09_noOccl_cam30_im3/
 
@@ -67,7 +67,7 @@ trainer:
     init_args:
       save_dir: ${trainer.default_root_dir}
 #      version: testUVwarp_noDir_07_noOccl_cam60_im1_fist
-      version: testUVwarp_newWarp_07_cam5_im12_2gpu
+      version: testUVwarp_lpips-5huber_withDir_07_noOccl_cam60_im1_fist
 #      version: testOffsetNet_small_colorLoss_dynamic_delay0_lr5e-5
 
   strategy:
@@ -92,20 +92,29 @@ trainer:
 # make assert for closest point finding
 
 # Today:
-# todo: add metrics, PSNR, LPIPS(x1000), FID
-# todo: sampling over a patch
-# todo: lpips
-# todo: train uv warp with pose conditioning
-# todo: add viewing directions
+# add metrics, PSNR, LPIPS(x1000), FID
+# sampling over a patch
+# lpips
+
+# add viewing directions
+
+# todo: how to warp directions?
+# todo: penalize pts with large distances from mesh
+
 # todo: for datasets, handle black frames
+# todo: train on full sequences (longer datasets)
+
+# Later:
+# todo: ask about color calibration parameters g, b
+# todo: add pose conditioning
+
 
 # Experiments
 # repeat on static pose, add one challenging pose - not fist
 # repeat on 3 poses, 30 cameras each
 # repeat on 10 poses, 30 cameras each
 
-# Later:
-# todo: ask about color calibration parameters g, b
+
 
 # Later:
 # implement kaolin loss for canonical warping - it will supervise offset net

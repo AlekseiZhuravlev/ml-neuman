@@ -39,6 +39,8 @@ from losses.sil_loss_world import SilhouetteLossWorld
 from mano_custom import mano_pytorch3d
 from renderers.renderer_warp import RendererWarp
 
+from sampling.raysampler_lpips import LPIPSRaysampler
+
 import torchmetrics
 import pytorch3d
 
@@ -73,7 +75,7 @@ class HandModel(L.LightningModule):
         self.render_size_x = 512
         self.render_size_y = 334
 
-        self.raysampler_train = NDCMultinomialRaysampler(
+        self.raysampler_train = LPIPSRaysampler(
             image_height=self.render_size_x,
             image_width=self.render_size_y,
             n_rays_per_image=4096,
@@ -125,19 +127,20 @@ class HandModel(L.LightningModule):
         self.sil_loss_world = sil_loss_world
         self.sil_loss_can = sil_loss_can
 
-        self.metrics_train = torchmetrics.MetricCollection({
+        ###########################################################################
+        # Metrics
+        ###########################################################################
 
-
-        })
-
-
+        self.metric_lpips = torchmetrics.image.lpip.LearnedPerceptualImagePatchSimilarity(
+            net_type='alex', reduction='mean', normalize=True
+        )
+        self.metric_psnr = torchmetrics.image.PeakSignalNoiseRatio(data_range=(0, 1))
+        self.metric_fid = torchmetrics.image.fid.FrechetInceptionDistance(
+            feature=2048, reset_real_features=False, normalize=True
+        )
 
         # fixme: this is a hack to make the offset net work
         self.automatic_optimization = False
-
-
-
-
 
 
     def configure_optimizers(self):
@@ -195,14 +198,17 @@ class HandModel(L.LightningModule):
             image_size=camera_params['image_size'],
             device=self.device
         )
+
+        mask_sampling = mask_lpips.sampling_mask_lpips(silhouettes)
+
         rendered_images, rendered_silhouettes, ray_bundle = self.renderer_warp.forward(
-            raysampler=self.raysampler_train,
+            raysampling_func=self.raysampler_train.forward_lpips,
             batch_cameras=batch_cameras,
             verts=manos['verts'],
             Ts=manos['Ts'],
 
             # masks_sampling=mask_random_sil.sampling_mask_0_25(silhouettes),
-            masks_sampling=mask_lpips.sampling_mask_lpips(silhouettes),
+            masks_sampling=mask_sampling,
             nerf_func=self.neural_radiance_field.forward,
             warp_func=self.warp_class.warp_points,
 
@@ -210,7 +216,7 @@ class HandModel(L.LightningModule):
             curr_pose_id=manos['pose_id'],
             logger=self.logger.experiment,
             curr_epoch=self.current_epoch,
-        )  # rendered_images_silhouettes.shape torch.Size([1, 8192, 1, 4])
+        )  # rendered_images.shape torch.Size([1, 64, 64, 3]), rendered_silhouettes.shape torch.Size([1, 64, 64, 1])
 
         ###########################################################################
         # Raysampling in canonical space
@@ -225,7 +231,7 @@ class HandModel(L.LightningModule):
         # )
         #
         # rendered_images_can, rendered_silhouettes_can, ray_bundle_can = self.renderer_warp.forward(
-        #     raysampler=self.raysampler_train,
+        #     raysampler=self.raysampler_train.forward,
         #     batch_cameras=batch_cameras_can,
         #     verts=manos['verts_zero'],
         #     Ts=None,
@@ -269,83 +275,10 @@ class HandModel(L.LightningModule):
         colors_at_rays = pytorch3d.renderer.utils.ndc_grid_sample(
             images.permute(0, 3, 1, 2),
             ray_bundle.xys,
-        ).permute(0, 2, 3, 1)
+        ).permute(0, 2, 3, 1) # [1, 64, 64, 3]
 
-        print('colors_at_rays', colors_at_rays.shape)
-        # exit(0)
-
-        print("ray_bundle", ray_bundle)
-        print('xys', ray_bundle.xys.shape)
-        import matplotlib.pyplot as plt
-        fig = plt.figure()
-        ax = fig.add_subplot(131)
-
-        xys = ray_bundle.xys.reshape(-1, 2).cpu().numpy()
-        colors_at_xys = colors_at_rays.reshape(-1, 3).cpu().numpy()
-
-        xys[:, 0] = ((xys[:, 0] - xys[:, 0].min()) / (xys[:, 0].max() - xys[:, 0].min())) * 64
-        xys[:, 1] = ((xys[:, 1] - xys[:, 1].min()) / (xys[:, 1].max() - xys[:, 1].min())) * 64
-
-        xys_int = xys.astype(np.int32)
-        print('xys', xys)
-        print('xys_int', xys_int)
-        print('xys - int', np.sum(np.abs(xys_int - xys)))
-
-        img_orig_patch = np.zeros((64, 64, 3))
-        img_orig_patch[xys_int[:, 0], xys_int[:, 1]] = colors_at_xys
-
-        ax.imshow(img_orig_patch)
-
-        colors_at_rays_rgba = torch.cat([colors_at_rays, torch.ones_like(colors_at_rays[..., 0:1])], dim=-1)
-
-        # for i in range(len(xys)):
-        #     ax.plot(xys[i, 0], xys[i, 1], c=colors_at_xys[i], marker='o')
-
-        ax = fig.add_subplot(132)
-
-        from pytorch3d.implicitron.tools.rasterize_mc import rasterize_mc_samples
-
-        print('colors_at_rays', colors_at_rays.shape)
-        print('ray_bundle.xys', ray_bundle.xys.reshape(1, -1, 2).shape)
-        print('colors_at_rays_rgba', colors_at_rays_rgba.reshape(1, -1, 4).shape)
-
-        data_rendered, render_mask = rasterize_mc_samples(
-            ray_bundle.xys.reshape(1, -1, 2),
-            colors_at_rays_rgba.reshape(1, -1, 4),
-            (self.render_size_x, self.render_size_y)
-        )
-        print('data_rendered', data_rendered)
-        print('data_rendered', data_rendered.shape)
-        print('render_mask', render_mask)
-        print('render_mask', render_mask.shape)
-
-        # torch.Size([1, 4, 64, 64]) to torch.Size([64, 64, 4])
-        data_rendered = data_rendered.squeeze(0).permute(1, 2, 0)
-        mask_rendered = render_mask[0][0]
-
-        mask_more0 = mask_rendered > 0
-
-        # select only the pixels that are inside the mask
-        data_rendered = data_rendered[mask_more0]
-        print('data_rendered', data_rendered.shape)
-
-        ax.imshow(data_rendered.cpu().numpy())
-
-        ax = fig.add_subplot(133)
-
-        ax.imshow(mask_rendered.cpu().numpy())
-
-        # ax.imshow(img_orig_patch.cpu().numpy())
-        # ax = fig.add_subplot(122)
-
-        #
-        # ax.plot(xys[:, 0], xys[:, 1], 'o')
-        plt.savefig(f"/home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf/sampling/mask_lpips.png")
-
-        exit(0)
-
-
-
+        assert rendered_images.shape == colors_at_rays.shape,\
+            f'rendered_images.shape = {rendered_images.shape}, colors_at_rays.shape = {colors_at_rays.shape}'
 
         color_err = self.loss_func_color(
             rendered_images,
@@ -356,7 +289,14 @@ class HandModel(L.LightningModule):
         # Calculate and log the metrics
         ###########################################################################
 
-        # TODO: reshape rendered images and colors at rays
+        lpips_metric = self.metric_lpips(
+            rendered_images.permute(0, 3, 1, 2),
+            colors_at_rays.permute(0, 3, 1, 2)
+        )
+        psnr_metric = self.metric_psnr(
+            rendered_images.permute(0, 3, 1, 2),
+            colors_at_rays.permute(0, 3, 1, 2)
+        )
 
         ###########################################################################
         # Log the errors
@@ -366,9 +306,13 @@ class HandModel(L.LightningModule):
         # self.log('sil_loss_can', sil_err_can, prog_bar=True, logger=True)
         # self.log('offset_mean', self.offset_module.mean_offset, prog_bar=True, logger=True)
 
+        self.log('lpips_metric', self.metric_lpips, prog_bar=True, logger=True)
+        self.log('psnr_metric', self.metric_psnr, prog_bar=False, logger=True)
+
 
         # loss = color_err + sil_err_world + sil_err_can + 0.1 * self.offset_module.mean_offset
-        loss = color_err + sil_err_world
+        # loss = color_err + sil_err_world
+        loss = 5 * color_err + lpips_metric + sil_err_world
 
         loss.backward()
         opt.step()
@@ -393,7 +337,7 @@ class HandModel(L.LightningModule):
         )
 
         rendered_image, rendered_silhouette, ray_bundle = self.renderer_warp.forward(
-            raysampler=self.raysampler_canonical,
+            raysampling_func=self.raysampler_canonical.forward,
             batch_cameras=batch_cameras,
             verts=manos['verts'],
             Ts=manos['Ts'],
@@ -419,7 +363,7 @@ class HandModel(L.LightningModule):
 
     def validate_canonical_space(self, batch_cameras):
         rendered_image, rendered_silhouette, ray_bundle = self.renderer_warp.forward(
-            raysampler=self.raysampler_canonical,
+            raysampling_func=self.raysampler_canonical.forward,
             batch_cameras=batch_cameras,
             verts=self.verts_zero_pose,
             Ts=None,
