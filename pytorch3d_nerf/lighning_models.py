@@ -138,6 +138,7 @@ class HandModel(L.LightningModule):
         self.metric_fid = torchmetrics.image.fid.FrechetInceptionDistance(
             feature=2048, reset_real_features=False, normalize=True
         )
+        self.metric_mae = torchmetrics.MeanAbsoluteError()
 
         # fixme: this is a hack to make the offset net work
         self.automatic_optimization = False
@@ -312,7 +313,7 @@ class HandModel(L.LightningModule):
 
         # loss = color_err + sil_err_world + sil_err_can + 0.1 * self.offset_module.mean_offset
         # loss = color_err + sil_err_world
-        loss = 5 * color_err + lpips_metric + sil_err_world
+        loss = 1 * color_err + lpips_metric + sil_err_world
 
         loss.backward()
         opt.step()
@@ -351,6 +352,33 @@ class HandModel(L.LightningModule):
             logger=self.logger.experiment,
             curr_epoch=self.current_epoch,
         )  # rendered_images_silhouettes.shape torch.Size([1, 8192, 1, 4])
+
+        ###########################################################################
+        # Calculate validation metrics
+        ###########################################################################
+
+        colors_at_rays = pytorch3d.renderer.utils.ndc_grid_sample(
+            images.permute(0, 3, 1, 2),
+            ray_bundle.xys,
+        ).permute(0, 2, 3, 1) # [1, 64, 64, 3]
+
+        assert rendered_image.shape == colors_at_rays.shape,\
+            f'rendered_images.shape = {rendered_image.shape}, colors_at_rays.shape = {colors_at_rays.shape}'
+
+        self.metric_lpips(
+            rendered_image.permute(0, 3, 1, 2),
+            colors_at_rays.permute(0, 3, 1, 2)
+        )
+        self.metric_psnr(
+            rendered_image.permute(0, 3, 1, 2),
+            colors_at_rays.permute(0, 3, 1, 2)
+        )
+        self.metric_fid.update(rendered_image.permute(0, 3, 1, 2), real=False)
+        self.metric_fid.update(images.permute(0, 3, 1, 2), real=True)
+
+        ###################################################################################
+        # Save the rendered images
+        ###################################################################################
 
         # convert rendered silhouette to rgb
         rendered_silhouette = torch.cat([rendered_silhouette, rendered_silhouette, rendered_silhouette], dim=-1)
@@ -403,26 +431,33 @@ class HandModel(L.LightningModule):
         tensorboard_logger.add_image(f'validation_world', grid, self.current_epoch)
         tensorboard_logger.add_image(f'validation_can', grid_can, self.current_epoch)
 
+        self.log('lpips_val', self.metric_lpips, logger=True)
+        self.log('psnr_val', self.metric_psnr, logger=True)
+        self.log('fid_val', self.metric_fid, logger=True)
+
+
+
 
     def on_fit_start(self):
         """
         add train and val images to tensorboard
         """
+        # return
 
-        train_images = torch.tensor(self.trainer.datamodule.train_dataset.images).permute(0, 3, 1, 2)
-        train_sil = torch.tensor(self.trainer.datamodule.train_dataset.silhouettes).unsqueeze(-1).permute(0, 3, 1, 2)
+        # train_images = torch.tensor(self.trainer.datamodule.train_dataset.images).permute(0, 3, 1, 2)
+        # train_sil = torch.tensor(self.trainer.datamodule.train_dataset.silhouettes).unsqueeze(-1).permute(0, 3, 1, 2)
 
-        val_images = torch.tensor(self.trainer.datamodule.test_dataset.images).permute(0, 3, 1, 2)
-        val_sil = torch.tensor(self.trainer.datamodule.test_dataset.silhouettes).unsqueeze(-1).permute(0, 3, 1, 2)
+        val_images = torch.tensor(self.trainer.datamodule.val_dataset.images).permute(0, 3, 1, 2)
+        val_sil = torch.tensor(self.trainer.datamodule.val_dataset.silhouettes).unsqueeze(-1).permute(0, 3, 1, 2)
 
-        train_images_grid = torchvision.utils.make_grid(train_images, nrow=5)
-        train_sil_grid = torchvision.utils.make_grid(train_sil, nrow=5)
+        # train_images_grid = torchvision.utils.make_grid(train_images, nrow=5)
+        # train_sil_grid = torchvision.utils.make_grid(train_sil, nrow=5)
         val_images_grid = torchvision.utils.make_grid(val_images, nrow=5)
         val_sil_grid = torchvision.utils.make_grid(val_sil, nrow=5)
 
         tensorboard_logger = self.logger.experiment
-        tensorboard_logger.add_image(f'train_images', train_images_grid, 0)
-        tensorboard_logger.add_image(f'train_sil', train_sil_grid, 0)
+        # tensorboard_logger.add_image(f'train_images', train_images_grid, 0)
+        # tensorboard_logger.add_image(f'train_sil', train_sil_grid, 0)
         tensorboard_logger.add_image(f'val_images', val_images_grid, 0)
         tensorboard_logger.add_image(f'val_sil', val_sil_grid, 0)
 

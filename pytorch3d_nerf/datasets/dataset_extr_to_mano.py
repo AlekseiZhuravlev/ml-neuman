@@ -2,7 +2,7 @@ import sys, os
 import glob
 sys.path.append("/home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf")
 
-
+from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -19,21 +19,39 @@ from pytorch3d.renderer import (
     FoVPerspectiveCameras,
     PerspectiveCameras,
 )
+import segmentation.grabcut_utils as grabcut_utils
+import shutil
 
 
 class NeumanDataset(torch.utils.data.Dataset):
-    def __init__(self, exp_dir, cap_ids, bg_rm_dilation):
+    def __init__(self, exp_dir, cap_ids, bg_rm_dilation, use_grabcut):
         self.exp_dir = exp_dir
         self.cap_ids = cap_ids
         self.hand_model = mano_pytorch3d.create_mano_custom(return_right_hand=False)
 
+        print('loading cameras')
         self.load_cameras_interhand()
         # self.load_silhouettes()
+        print('loading images')
         self.load_images()
+        print('loading mano')
         self.load_mano()
 
+        print('creating zero pose silhouettes')
         self.create_zero_pose_silhouettes()
+        print('creating silhouettes')
         self.create_silhouettes()
+
+        self.use_grabcut = use_grabcut
+        if use_grabcut:
+            print('applying grabcut to silhouettes')
+            self.load_grabcut_silhouettes()
+            self.silhouettes = self.silhouettes_grabcut
+        else:
+            print('not applying grabcut to silhouettes')
+            self.silhouettes = self.silhouettes_raw
+
+        print('masking images')
         self.mask_images(bg_rm_dilation)
 
 
@@ -109,7 +127,7 @@ class NeumanDataset(torch.utils.data.Dataset):
         raise NotImplementedError('create silhouettes instead')
         sil_path = self.exp_dir + '/segmentations'
 
-        self.silhouettes = []
+        self.silhouettes_raw = []
 
         for i in self.cap_ids:
             sil_file = sil_path + f'/{i:05d}.png'
@@ -123,7 +141,7 @@ class NeumanDataset(torch.utils.data.Dataset):
             # mask_dilated_5 = ndimage.binary_dilation(mask, iterations=5) - mask.numpy()
             # sil_dilated_10 = ndimage.binary_dilation(sil, iterations=10).astype(np.float32).clip(0.0, 1.0)
 
-            self.silhouettes.append(
+            self.silhouettes_raw.append(
                 sil
             )
 
@@ -164,7 +182,7 @@ class NeumanDataset(torch.utils.data.Dataset):
             if 'pose_id' in mano:
                 pose_id = mano['pose_id']
             else:
-                print('pose_id not found in mano')
+                # print('pose_id not found in mano')
                 pose_id = 1
 
             mano_dict = {
@@ -214,9 +232,67 @@ class NeumanDataset(torch.utils.data.Dataset):
 
         return root_pose, hand_pose, shape, trans
 
+
+    def create_grabcut_silhouette(self, i_image):
+
+        # for i in tqdm(range(len(self.images)), desc='applying grabcut to silhouettes'):
+        image_np = (self.images[i_image] * 255).astype(np.uint8)
+        silhouette_np = (self.silhouettes_raw[i_image].unsqueeze(-1).cpu().numpy() * 255).astype(np.uint8)
+
+        # refine mask with grabcut
+        mano_mask_gc = grabcut_utils.grabcut_refine(silhouette_np, image_np)
+
+        # largest component
+        mano_mask_gc_lc = grabcut_utils.largest_component(mano_mask_gc)
+
+        # detect forearm region in the mask (if any)
+        mano_mask_forearm_removed = grabcut_utils.remove_forearm(silhouette_np, mano_mask_gc_lc)
+
+        # convert to torch tensor and normalize
+        mask_improved = torch.tensor(mano_mask_forearm_removed)
+        mask_improved = mask_improved / mask_improved.max()
+        return mask_improved
+
+        # self.silhouettes_raw[i] = mask_improved
+
+            # # apply mask to image
+            # mask_improved_3ch = mask_improved.unsqueeze(-1).repeat(1, 1, 3)
+            # image_segmented = self.images[i] * mask_improved_3ch
+
+    def load_grabcut_silhouettes(self):
+        sil_path = self.exp_dir + '/silhouettes_grabcut'
+        # create folder if it doesn't exist
+        os.makedirs(sil_path, exist_ok=True)
+
+        self.silhouettes_grabcut = []
+
+        for i_image, j_cap_id in enumerate(tqdm(self.cap_ids, desc='loading grabcut silhouettes')):
+            sil_file = sil_path + f'/{j_cap_id:05d}.png'
+
+            if not os.path.exists(sil_file):
+                try:
+                    sil = self.create_grabcut_silhouette(i_image)
+
+                    # check if silhouette is > 90% black
+                    sil_np = sil.numpy()
+                    if np.sum(sil_np) < 0.005 * sil_np.shape[0] * sil_np.shape[1]:
+                        raise RuntimeError(f'Silhouette {j_cap_id} is too dark')
+                except Exception as e:
+                    print(f'Error applying grabcut to image {j_cap_id}: {e}')
+                    sil = self.silhouettes_raw[i_image]
+                cv2.imwrite(sil_file, sil.numpy() * 255)
+            else:
+                sil = cv2.imread(sil_file, cv2.IMREAD_GRAYSCALE)
+                sil = sil.astype(np.float32) / 255.0
+                sil = sil.clip(0.0, 1.0)
+
+            self.silhouettes_grabcut.append(
+                sil
+            )
+
+
     def mask_images(self, bg_rm_dilation):
         for i in range(len(self.images)):
-
             if bg_rm_dilation > 0:
                 sil_dilated = ndimage.binary_dilation(self.silhouettes[i], iterations=bg_rm_dilation).astype(np.float32).clip(0.0, 1.0)
             else:
@@ -226,61 +302,82 @@ class NeumanDataset(torch.utils.data.Dataset):
             self.images[i] = self.images[i] * silh_3ch
 
     def create_zero_pose_silhouettes(self):
-        if len(self.camera_params_training) < 150:
-            device='cuda' if torch.cuda.is_available() else 'cpu'
-        else:
-            device='cpu'
-        print('creating zero pose silhouettes, device: ', device)
+        # create tensor of indices of self.camera_params_training, and split it into chunks of 150
+        idx_tensor = torch.tensor(list(range(len(self.Rs_can))))
+        idx_chunks = torch.split(idx_tensor, 150)
 
-        cameras = FoVPerspectiveCameras(
-            R=self.Rs_can,
-            T=self.Ts_can,
-            znear=0.01,
-            zfar=10,
-            device=device,
-        )
-        #        verts_py3d_repeated = verts_py3d.repeat(self.n_cameras, 1, 1)
-        # faces_repeated = faces.repeat(self.n_cameras, 1, 1)
-
-        renderer = RendererCanonical(cameras)
-
-        # print(self.manos[0]['verts_zero'].repeat(len(cameras), 1, 1).shape)
-        # print(torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :].repeat(len(cameras), 1, 1).shape)
-
-        with torch.no_grad():
-            self.silhouettes_zero_pose = renderer.render_zero_pose_sil(
-                self.manos[0]['verts_zero'].repeat(len(cameras), 1, 1).to(device),
-                torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :].repeat(len(cameras), 1, 1).to(device),
+        # create silhouettes for each chunk
+        self.silhouettes_zero_pose = torch.tensor([], device='cpu')
+        for idx_chunk in idx_chunks:
+            cameras_chunk = FoVPerspectiveCameras(
+                R=torch.stack([self.Rs_can[idx] for idx in idx_chunk], dim=0),
+                T=torch.stack([self.Ts_can[idx] for idx in idx_chunk], dim=0),
+                znear=0.01,
+                zfar=10,
+                device='cuda',
             )
-        self.silhouettes_zero_pose = self.silhouettes_zero_pose.cpu().squeeze(-1)
+            renderer = RendererCanonical(cameras_chunk)
+
+            with torch.no_grad():
+                silhouettes_chunk = renderer.render_zero_pose_sil(
+                    self.manos[0]['verts_zero'].repeat(len(cameras_chunk), 1, 1).to('cuda'),
+                    torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :].to('cuda').repeat(len(cameras_chunk), 1, 1),
+                )
+            silhouettes_chunk = silhouettes_chunk.cpu().squeeze(-1)
+            self.silhouettes_zero_pose = torch.cat((self.silhouettes_zero_pose, silhouettes_chunk), dim=0)
 
     def create_silhouettes(self):
 
-        if len(self.camera_params_training) < 150:
-            device='cuda' if torch.cuda.is_available() else 'cpu'
-        else:
-            device='cpu'
-        print('creating silhouettes, device: ', device)
+        # create tensor of indices of self.camera_params_training, and split it into chunks of 150
+        idx_tensor = torch.tensor(list(range(len(self.camera_params_training))))
+        idx_chunks = torch.split(idx_tensor, 150)
 
-        cameras = PerspectiveCameras(
-            R=torch.stack([camera_params['R_pytorch3d'] for camera_params in self.camera_params_training], dim=0),
-            T=torch.stack([camera_params['t_pytorch3d'] for camera_params in self.camera_params_training], dim=0),
-            focal_length=torch.stack([camera_params['focal'] for camera_params in self.camera_params_training], dim=0),
-            principal_point=torch.stack([camera_params['princpt'] for camera_params in self.camera_params_training], dim=0),
-            in_ndc=False,
-            image_size=torch.stack([camera_params['image_size'] for camera_params in self.camera_params_training], dim=0),
-            device=device
-        )
-        renderer = RendererCanonical(cameras)
-
-        verts_to_render = torch.stack([mano['verts'] for mano in self.manos], dim=0)
-
-        with torch.no_grad():
-            self.silhouettes = renderer.render_zero_pose_sil(
-                verts_to_render.to(device),
-                torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :].to(device).repeat(len(cameras), 1, 1),
+        # create silhouettes for each chunk
+        self.silhouettes_raw = torch.tensor([], device='cpu')
+        for idx_chunk in idx_chunks:
+            cameras_chunk = PerspectiveCameras(
+                R=torch.stack([self.camera_params_training[idx]['R_pytorch3d'] for idx in idx_chunk], dim=0),
+                T=torch.stack([self.camera_params_training[idx]['t_pytorch3d'] for idx in idx_chunk], dim=0),
+                focal_length=torch.stack([self.camera_params_training[idx]['focal'] for idx in idx_chunk], dim=0),
+                principal_point=torch.stack([self.camera_params_training[idx]['princpt'] for idx in idx_chunk], dim=0),
+                in_ndc=False,
+                image_size=torch.stack([self.camera_params_training[idx]['image_size'] for idx in idx_chunk], dim=0),
+                device='cuda',
             )
-        self.silhouettes = self.silhouettes.cpu().squeeze(-1)
+            renderer = RendererCanonical(cameras_chunk)
+
+            verts_to_render = torch.stack([self.manos[idx]['verts'] for idx in idx_chunk], dim=0)
+
+            with torch.no_grad():
+                silhouettes_chunk = renderer.render_zero_pose_sil(
+                    verts_to_render.to('cuda'),
+                    torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :].to('cuda').repeat(len(cameras_chunk), 1, 1),
+                )
+            silhouettes_chunk = silhouettes_chunk.cpu().squeeze(-1)
+            self.silhouettes_raw = torch.cat((self.silhouettes_raw, silhouettes_chunk), dim=0)
+
+
+
+
+        # cameras = PerspectiveCameras(
+        #     R=torch.stack([camera_params['R_pytorch3d'] for camera_params in self.camera_params_training], dim=0),
+        #     T=torch.stack([camera_params['t_pytorch3d'] for camera_params in self.camera_params_training], dim=0),
+        #     focal_length=torch.stack([camera_params['focal'] for camera_params in self.camera_params_training], dim=0),
+        #     principal_point=torch.stack([camera_params['princpt'] for camera_params in self.camera_params_training], dim=0),
+        #     in_ndc=False,
+        #     image_size=torch.stack([camera_params['image_size'] for camera_params in self.camera_params_training], dim=0),
+        #     device=device
+        # )
+        # renderer = RendererCanonical(cameras)
+        #
+        # verts_to_render = torch.stack([mano['verts'] for mano in self.manos], dim=0)
+        #
+        # with torch.no_grad():
+        #     self.silhouettes = renderer.render_zero_pose_sil(
+        #         verts_to_render.to(device),
+        #         torch.from_numpy(self.hand_model.faces.astype(np.int32))[None, :, :].to(device).repeat(len(cameras), 1, 1),
+        #     )
+        # self.silhouettes = self.silhouettes.cpu().squeeze(-1)
 
 
     def __len__(self):
@@ -293,16 +390,37 @@ class NeumanDataset(torch.utils.data.Dataset):
 if __name__ == '__main__':
 
 
-    data_path = '/home/azhuavlev/Desktop/Data/InterHand_Neuman/03'
+    # data_path = '/home/azhuavlev/Desktop/Data/InterHand_Neuman/07_cam5_im12'
+    data_path = '/home/azhuavlev/Desktop/Data/InterHand_Neuman/10_images50_cameras15_every5---ROM03_LT_No_Occlusion'
+    save_path = data_path + '/segmented_images_debug'
+    shutil.rmtree(save_path, ignore_errors=True)
+    os.makedirs(save_path, exist_ok=True)
 
-    all_ids = list(range(len(
-        glob.glob(os.path.join(data_path, 'images', '*.png'))
-    )))
+    all_files = glob.glob(os.path.join(data_path, 'images', '*.png'))
+    all_ids = sorted([int(os.path.basename(f)[:-4]) for f in all_files])
+    # all_ids = list(range(len(
+    #     )
+    # )))
 
     # use 80% of the data for training, randomize the order
-    np.random.shuffle(all_ids)
-    train_ids = all_ids[int(0.3 * len(all_ids)):]
-    test_ids = all_ids[:int(0.3 * len(all_ids))]
-    print(test_ids)
+    # np.random.shuffle(all_ids)
+    # train_ids = all_ids[int(0.3 * len(all_ids)):]
+    # test_ids = all_ids[:int(0.3 * len(all_ids))]
+    # print(test_ids)
 
-    train_dataset = NeumanDataset(data_path, train_ids, bg_rm_dilation=0)
+    train_dataset = NeumanDataset(data_path, all_ids, bg_rm_dilation=0, use_grabcut=True)
+
+    import matplotlib.pyplot as plt
+
+    for i in tqdm(range(len(train_dataset)), desc='saving images'):
+        # plot images[i] and silhouettes[i] on the same plot, and save to /home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf/datasets/images
+
+        batch = train_dataset[i]
+        images = batch[1]
+        silhouettes = batch[2]
+
+        fig, ax = plt.subplots(1, 2)
+        ax[0].imshow(images)
+        ax[1].imshow(silhouettes)
+        plt.savefig(f'{save_path}/{i:05d}.png')
+        plt.close(fig)

@@ -7,6 +7,7 @@ from tqdm import tqdm
 
 import sys
 
+import numpy as np
 # sys.path.append('../..')
 
 
@@ -45,7 +46,14 @@ class InterhandToNeumanConverter:
             self.cameras_list = cameras_list
         else:
             self.cameras_list = [folder_name[3:] for folder_name in sorted(os.listdir(self.pose_path))]
+
+        cameras_to_exclude = ['400267', '400268']
+        for camera_to_exclude in cameras_to_exclude:
+            if camera_to_exclude in self.cameras_list:
+                self.cameras_list.remove(camera_to_exclude)
+
         self.cameras_list = self.cameras_list[:self.max_cameras]
+        print('cameras_list', self.cameras_list)
 
         self.target_folder = '/itet-stor/azhuavlev/net_scratch/Projects/Data/InterHand_Neuman/' \
                              f'{experiment_n}'
@@ -103,35 +111,46 @@ class InterhandToNeumanConverter:
         """
         Copy images from interhand to neuman format
         """
-        n_images_per_camera = self.check_camera_img_count()
-        n_images = min(n_images_per_camera, self.max_images_per_camera)
+        # n_images_per_camera = self.check_camera_img_count()
+        # n_images = min(n_images_per_camera, self.max_images_per_camera)
 
-        for k_image_local_idx in tqdm(range(n_images)):
+        tqdm_iterable = tqdm(self.cameras_list)
+        for i_camera, camera in enumerate(tqdm_iterable):
 
-            if n_images == 1:
-                print('n_images == 1, setting k_image_local_idx to 1')
-                k_image_local_idx = 1
+            # how many images does this camera have
+            n_imgs_camera_has = len(os.listdir(self.pose_path + '/' + f'cam{camera}'))
 
-            j_image_in_folder = self.every_n_frames * k_image_local_idx
+            # how many images to copy from this camera
+            if n_imgs_camera_has < self.max_images_per_camera * self.every_n_frames:
+                n_images = n_imgs_camera_has // self.every_n_frames
+            else:
+                n_images = self.max_images_per_camera
 
-            for i_camera, camera in enumerate(self.cameras_list):
+            for j_image_in_folder in range(0, n_images * self.every_n_frames, self.every_n_frames):
 
-                print('camera', camera, 'k_image_local_idx', k_image_local_idx, 'j_image_in_folder', j_image_in_folder)
+                if n_images == 1:
+                    print(f'n_images == 1, setting j_image_in_folder to {self.every_n_frames}')
+                    j_image_in_folder = self.every_n_frames
 
-                camera_folder = self.base_folder + '/images/' + self.split + '/' + \
-                                f"Capture{self.capture_n}" + '/' + self.pose + '/' + f'cam{camera}'
-                img = sorted(os.listdir(camera_folder))[j_image_in_folder]
+                # print('camera', camera, 'j_image_in_folder', j_image_in_folder)
+                tqdm_iterable.set_description(f'camera {camera}, j_image_in_folder {j_image_in_folder}')
+                try:
+                    camera_folder = self.base_folder + '/images/' + self.split + '/' + \
+                                    f"Capture{self.capture_n}" + '/' + self.pose + '/' + f'cam{camera}'
+                    img = sorted(os.listdir(camera_folder))[j_image_in_folder]
 
-                self.copy_image(
-                    from_path=camera_folder,
-                    img_name=img,
-                    to_path=self.target_folder + '/images',
-                    grayscale=False
-                )
-                self.create_mano(img, k_image_local_idx)
+                    self.copy_image(
+                        from_path=camera_folder,
+                        img_name=img,
+                        to_path=self.target_folder + '/images',
+                        grayscale=False
+                    )
+                    self.create_mano(img)
 
-                self.create_camera(camera)
-                self.curr_img += 1
+                    self.create_camera(camera)
+                    self.curr_img += 1
+                except Exception as e:
+                    print(f'Skipping image {img} from camera {camera}, reason: {e}')
 
 
     def copy_image(self, from_path, img_name, to_path, grayscale):
@@ -141,6 +160,11 @@ class InterhandToNeumanConverter:
 
         img_jpg = Image.open(f'{to_path}/{img_name}')
 
+        # check if image is > 95% black
+        img_np = np.array(img_jpg)
+        if np.sum(img_np) < 0.05 * img_np.shape[0] * img_np.shape[1] * img_np.shape[2]:
+            raise RuntimeError(f'Image {img_name} is too dark')
+
         if grayscale:
             img_jpg = img_jpg.convert('L')
 
@@ -149,12 +173,12 @@ class InterhandToNeumanConverter:
         os.system(f'rm {to_path}/{img_name}')
 
 
-    def create_mano(self, img_name, k_image_local_idx):
+    def create_mano(self, img_name):
         img_id = img_name[5:-4]
         mano_params = self.mano_dict[self.capture_n][img_id]
 
         # add key 'pose_id' to mano_params
-        mano_params['left']['pose_id'] = k_image_local_idx
+        # mano_params['left']['pose_id'] = k_image_local_idx
 
         with open(f'{self.mano_path}/{self.curr_img:05d}.json', 'w') as f:
             json.dump(mano_params, f)
@@ -190,11 +214,10 @@ if __name__ == '__main__':
         capture_n='0',
         pose='ROM03_LT_No_Occlusion',
         cameras_list=None,#['400262', '400263', '400264', '400265', '400284'],
-        experiment_n='09_noOccl_cam30_im3',
-        max_images_per_camera=3,
-        max_cameras=30,
-        every_n_frames=100,
+        experiment_n='10_images50_cameras15_every5---ROM03_LT_No_Occlusion',
+        max_images_per_camera=50,
+        max_cameras=15,
+        every_n_frames=5,
 
     )
-    # TODO check black images
     converter.copy_images()
