@@ -17,9 +17,12 @@ class MyDatamodule(L.LightningDataModule):
         self.use_grabcut = use_grabcut
 
     def setup(self, stage=None):
-        all_ids = list(range(len(
-            glob.glob(os.path.join(self.data_path, 'images', '*.png'))
-        )))
+        # all_ids = list(range(len(
+        #     glob.glob(os.path.join(self.data_path, 'images', '*.png'))
+        # )))
+
+        all_files = glob.glob(os.path.join(self.data_path, 'images', '*.png'))
+        all_ids = sorted([int(os.path.basename(f)[:-4]) for f in all_files])
 
         # use 80% of the data for training, randomize the order
         random.Random(4).shuffle(all_ids)
@@ -42,8 +45,8 @@ class MyDatamodule(L.LightningDataModule):
         # self.full_dataset = dataset_extr_to_mano.NeumanDataset(self.data_path, all_ids, self.bg_rm_dilation)
 
     def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=5)
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=0)
 
     def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, num_workers=5)
+        return DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, num_workers=0)
 

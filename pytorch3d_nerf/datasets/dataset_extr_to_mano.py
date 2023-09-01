@@ -391,7 +391,7 @@ if __name__ == '__main__':
 
 
     # data_path = '/home/azhuavlev/Desktop/Data/InterHand_Neuman/07_cam5_im12'
-    data_path = '/home/azhuavlev/Desktop/Data/InterHand_Neuman/10_images50_cameras15_every5---ROM03_LT_No_Occlusion'
+    data_path = '/home/azhuavlev/Desktop/Data/InterHand_Neuman/10_images50_cameras15_every5---ROM04_LT_Occlusion'
     save_path = data_path + '/segmented_images_debug'
     shutil.rmtree(save_path, ignore_errors=True)
     os.makedirs(save_path, exist_ok=True)

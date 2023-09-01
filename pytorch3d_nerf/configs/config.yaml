@@ -6,7 +6,7 @@ model:
 #    class_path: nerf_models.nerf_small_no_warp.NeuralRadianceFieldNoDir
     class_path: nerf_models.nerf_small_no_warp.NeuralRadianceField
     init_args:
-      n_harmonic_functions: 10
+      n_harmonic_functions: 60
 
   offset_module:
     class_path: offset.offset_module.OffsetModule
@@ -55,11 +55,10 @@ data:
 #  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/07_noOccl_cam60_im1_fist
 #  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/08_noOccl_cam60_im3/
 #  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/09_noOccl_cam30_im3/
-  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/10_images50_cameras30_every3---ROM03_LT_No_Occlusion
+  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/10_images50_cameras15_every5---ROM03_LT_No_Occlusion
+#  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/10_images50_cameras15_every5---ROM04_LT_Occlusion
   bg_rm_dilation: -1
   use_grabcut: True
-
-  # 295, 323, 422
 
 
 trainer:
@@ -72,13 +71,30 @@ trainer:
     init_args:
       save_dir: ${trainer.default_root_dir}
 #      version: testUVwarp_noDir_07_noOccl_cam60_im1_fist
-      version: testUVwarp_lpips-1huber_withDir_60hf_has-grabcut_10_images50_cameras30_every3
+      version: testUVwarp_lpips-1huber_withDir_60hf_grabcut___images50_cameras15_every5---ROM03_LT_No_Occlusion
 #      version: testOffsetNet_small_colorLoss_dynamic_delay0_lr5e-5
 
   strategy:
     class_path: lightning.pytorch.strategies.DDPStrategy
     init_args:
       find_unused_parameters: True
+
+# Later:
+# todo: use warp from paper, and other possible code
+# todo: test livehand on my datasets
+# todo: ask about color calibration parameters g, b
+# todo: add pose conditioning
+
+# Ask:
+#
+
+
+# Later:
+# todo: how to warp directions?
+# todo: penalize pts with large distances from mesh
+
+
+
 
 
 # create 3 datasets
@@ -103,24 +119,18 @@ trainer:
 
 # add viewing directions
 
-# todo: how to warp directions?
-# todo: penalize pts with large distances from mesh
-
 # segment images using grabcut
 # for datasets, handle black frames
 
 # batch mask generation
 
-# todo: val run:
+# val run:
 # create val dataset with some train and some val cameras, mark which ones are val
 # eval metrics, log at epoch end
 
 # change n of harmonic functions
-# todo: train on full sequences (longer datasets)
+# train on full sequences (longer datasets)
 
-# Later:
-# todo: ask about color calibration parameters g, b
-# todo: add pose conditioning
 
 
 # Experiments
