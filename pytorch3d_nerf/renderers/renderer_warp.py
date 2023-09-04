@@ -14,11 +14,13 @@ import lightning as L
 class RendererWarp(L.LightningModule):
     def __init__(
             self,
-            use_offset_net
+            use_offset_net,
+            pose_conditioning
     ):
         super().__init__()
         self.raymarcher = EmissionAbsorptionRaymarcher()
         self.use_offset_net = use_offset_net
+        self.pose_conditioning = pose_conditioning
 
     def forward(
             self,
@@ -26,13 +28,13 @@ class RendererWarp(L.LightningModule):
             batch_cameras,
             verts,
             Ts,
+            manos,
             masks_sampling,
             nerf_func,
             warp_func,
             offset_net_func,
             curr_pose_id,
-            logger, # fixme: debug only,
-            curr_epoch
+            curr_epoch,
             ):
 
         ###############################################################
@@ -88,13 +90,6 @@ class RendererWarp(L.LightningModule):
             # no warping
             ray_points_can = rays_points_world
             ray_directions_can = ray_directions
-            # ray_directions_can_one_dir_per_ray = ray_bundle.directions
-            #
-            # # expand ray directions, from one direction per ray to one direction per each point
-            # spatial_size = ray_points_can.shape[:-1]
-            # ray_directions_can = ray_directions_can_one_dir_per_ray[..., None, :].expand(
-            #     *spatial_size, ray_directions_can_one_dir_per_ray.shape[-1]
-            # )
 
         assert ray_points_can.isnan().any() == False
         assert ray_directions_can.isnan().any() == False
@@ -104,9 +99,17 @@ class RendererWarp(L.LightningModule):
         ###########################################################################
 
         # get output of nerf model
-        rays_densities, rays_features = nerf_func(
-            ray_points=ray_points_can, ray_directions=ray_directions_can
-        )
+        if self.pose_conditioning:
+            mano_pose = torch.cat([manos['root_pose'], manos['hand_pose']], dim=-1)
+            rays_densities, rays_features = nerf_func(
+                ray_points=ray_points_can,
+                ray_directions=ray_directions_can,
+                mano_pose=mano_pose
+            )
+        else:
+            rays_densities, rays_features = nerf_func(
+                ray_points=ray_points_can, ray_directions=ray_directions_can
+            )
         assert rays_densities.isnan().any() == False
         assert rays_features.isnan().any() == False
 

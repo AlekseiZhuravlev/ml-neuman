@@ -207,15 +207,14 @@ class HandModel(L.LightningModule):
             batch_cameras=batch_cameras,
             verts=manos['verts'],
             Ts=manos['Ts'],
+            manos=manos,
 
-            # masks_sampling=mask_random_sil.sampling_mask_0_25(silhouettes),
             masks_sampling=mask_sampling,
             nerf_func=self.neural_radiance_field.forward,
             warp_func=self.warp_class.warp_points,
 
             offset_net_func=self.offset_module.forward,
             curr_pose_id=manos['pose_id'],
-            logger=self.logger.experiment,
             curr_epoch=self.current_epoch,
         )  # rendered_images.shape torch.Size([1, 64, 64, 3]), rendered_silhouettes.shape torch.Size([1, 64, 64, 1])
 
@@ -342,6 +341,7 @@ class HandModel(L.LightningModule):
             batch_cameras=batch_cameras,
             verts=manos['verts'],
             Ts=manos['Ts'],
+            manos=manos,
 
             masks_sampling=None,
             nerf_func=self.neural_radiance_field.batched_forward,
@@ -349,7 +349,6 @@ class HandModel(L.LightningModule):
 
             offset_net_func=self.offset_module.batched_forward,
             curr_pose_id=manos['pose_id'],
-            logger=self.logger.experiment,
             curr_epoch=self.current_epoch,
         )  # rendered_images_silhouettes.shape torch.Size([1, 8192, 1, 4])
 
@@ -395,6 +394,7 @@ class HandModel(L.LightningModule):
             batch_cameras=batch_cameras,
             verts=self.verts_zero_pose,
             Ts=None,
+            manos=None,
 
             masks_sampling=None,
             nerf_func=self.neural_radiance_field.batched_forward,
@@ -402,7 +402,6 @@ class HandModel(L.LightningModule):
 
             offset_net_func=None,
             curr_pose_id=None,
-            logger=self.logger.experiment,
             curr_epoch=self.current_epoch,
 
         )  # rendered_images_silhouettes.shape torch.Size([1, 8192, 1, 4])
@@ -420,16 +419,16 @@ class HandModel(L.LightningModule):
         grid = torchvision.utils.make_grid(self.validation_images, nrow=5)
         self.validation_images = []
 
-        batch_cameras = create_canonical_cameras(10, random_cameras=False, device=self.device)
-        for i in range(len(batch_cameras)):
-            self.validate_canonical_space(batch_cameras[i])
+        # batch_cameras = create_canonical_cameras(10, random_cameras=False, device=self.device)
+        # for i in range(len(batch_cameras)):
+        #     self.validate_canonical_space(batch_cameras[i])
 
-        grid_can = torchvision.utils.make_grid(self.can_validation_images, nrow=5)
-        self.can_validation_images = []
+        # grid_can = torchvision.utils.make_grid(self.can_validation_images, nrow=5)
+        # self.can_validation_images = []
 
         tensorboard_logger = self.logger.experiment
         tensorboard_logger.add_image(f'validation_world', grid, self.current_epoch)
-        tensorboard_logger.add_image(f'validation_can', grid_can, self.current_epoch)
+        # tensorboard_logger.add_image(f'validation_can', grid_can, self.current_epoch)
 
         self.log('lpips_val', self.metric_lpips, logger=True)
         self.log('psnr_val', self.metric_psnr, logger=True)
@@ -448,6 +447,9 @@ class HandModel(L.LightningModule):
         # train_sil = torch.tensor(self.trainer.datamodule.train_dataset.silhouettes).unsqueeze(-1).permute(0, 3, 1, 2)
 
         val_images = torch.tensor(self.trainer.datamodule.val_dataset.images).permute(0, 3, 1, 2)
+
+        print('val_images.shape', self.trainer.datamodule.val_dataset.images)
+        print('val_sil.shape', self.trainer.datamodule.val_dataset.silhouettes)
         val_sil = torch.tensor(self.trainer.datamodule.val_dataset.silhouettes).unsqueeze(-1).permute(0, 3, 1, 2)
 
         # train_images_grid = torchvision.utils.make_grid(train_images, nrow=5)

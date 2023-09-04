@@ -4,7 +4,8 @@ model:
 
   nerf_model:
 #    class_path: nerf_models.nerf_small_no_warp.NeuralRadianceFieldNoDir
-    class_path: nerf_models.nerf_small_no_warp.NeuralRadianceField
+#    class_path: nerf_models.nerf_small_no_warp.NeuralRadianceField
+    class_path: nerf_models.nerf_small_no_warp.NeuralRadianceFieldPoseCond
     init_args:
       n_harmonic_functions: 60
 
@@ -41,6 +42,7 @@ model:
     class_path: renderers.renderer_warp.RendererWarp
     init_args:
       use_offset_net: False
+      pose_conditioning: True
 
   enable_offset_net: ${model.renderer_warp.init_args.use_offset_net}
 
@@ -55,8 +57,8 @@ data:
 #  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/07_noOccl_cam60_im1_fist
 #  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/08_noOccl_cam60_im3/
 #  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/09_noOccl_cam30_im3/
-  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/10_images50_cameras15_every5---ROM03_LT_No_Occlusion
-#  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/10_images50_cameras15_every5---ROM04_LT_Occlusion
+#  data_path: /home/azhuavlev/Desktop/Data/InterHand_Neuman/10_images50_cameras15_every5---ROM03_LT_No_Occlusion
+  data_path: /itet-stor/azhuavlev/net_scratch/Projects/Data/InterHand_Neuman/10_zeroPose/
   bg_rm_dilation: -1
   use_grabcut: True
 
@@ -71,7 +73,7 @@ trainer:
     init_args:
       save_dir: ${trainer.default_root_dir}
 #      version: testUVwarp_noDir_07_noOccl_cam60_im1_fist
-      version: testUVwarp_lpips-1huber_withDir_60hf_grabcut___images50_cameras15_every5---ROM03_LT_No_Occlusion
+      version: testPoseCondit_10_zeroPose
 #      version: testOffsetNet_small_colorLoss_dynamic_delay0_lr5e-5
 
   strategy:

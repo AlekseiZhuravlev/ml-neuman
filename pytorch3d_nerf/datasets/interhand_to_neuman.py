@@ -46,6 +46,14 @@ class InterhandToNeumanConverter:
             self.cameras_list = cameras_list
         else:
             self.cameras_list = [folder_name[3:] for folder_name in sorted(os.listdir(self.pose_path))]
+            # import yaml
+            # with open('/home/azhuavlev/PycharmProjects/ml-neuman_mano/pytorch3d_nerf/datasets/cam_indices_80cams.yaml',
+            #           'r') as f:
+            #     cameras_list = yaml.load(f, Loader=yaml.FullLoader)
+            # self.cameras_list = list(cameras_list.keys())
+            # print('cameras_list', self.cameras_list, len(self.cameras_list))
+
+        # exit(0)
 
         cameras_to_exclude = ['400267', '400268']
         for camera_to_exclude in cameras_to_exclude:
@@ -215,10 +223,10 @@ if __name__ == '__main__':
         # pose='ROM03_LT_No_Occlusion',
         pose='ROM04_LT_Occlusion',
         cameras_list=None,#['400262', '400263', '400264', '400265', '400284'],
-        experiment_n='10_images50_cameras15_every5---ROM04_LT_Occlusion',
-        max_images_per_camera=50,
-        max_cameras=15,
-        every_n_frames=5,
+        experiment_n='10_zeroPose',
+        max_images_per_camera=1,
+        max_cameras=60,
+        every_n_frames=1,
 
     )
     converter.copy_images()

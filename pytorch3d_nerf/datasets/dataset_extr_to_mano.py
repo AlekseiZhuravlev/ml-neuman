@@ -389,9 +389,17 @@ class NeumanDataset(torch.utils.data.Dataset):
 
 if __name__ == '__main__':
 
+    a = torch.rand(1, 548, 337, 3)
+    b = torch.rand(1, 48)
 
-    # data_path = '/home/azhuavlev/Desktop/Data/InterHand_Neuman/07_cam5_im12'
-    data_path = '/home/azhuavlev/Desktop/Data/InterHand_Neuman/10_images50_cameras15_every5---ROM04_LT_Occlusion'
+    b = b.unsqueeze(1).repeat(1, 548, 337, 1)
+
+    print(torch.cat([a, b], dim=-1).shape)
+    exit(0)
+
+
+    data_path = '/home/azhuavlev/Desktop/Data/InterHand_Neuman/07_cam5_im12'
+    # data_path = '/home/azhuavlev/Desktop/Data/InterHand_Neuman/10_images50_cameras15_every5---ROM04_LT_Occlusion'
     save_path = data_path + '/segmented_images_debug'
     shutil.rmtree(save_path, ignore_errors=True)
     os.makedirs(save_path, exist_ok=True)
@@ -409,6 +417,9 @@ if __name__ == '__main__':
     # print(test_ids)
 
     train_dataset = NeumanDataset(data_path, all_ids, bg_rm_dilation=0, use_grabcut=True)
+    camera_params, images, silhouettes, silhouettes_zero, manos = train_dataset[0]
+    print(len(manos['root_pose']), len(manos['hand_pose']))
+    exit(0)
 
     import matplotlib.pyplot as plt
 
