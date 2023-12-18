@@ -1,4 +1,5 @@
 model:
+  #
 #  nerf_model:
 #    class_path: nerf_models.nerf_small_no_warp.NeuralRadianceField
 
